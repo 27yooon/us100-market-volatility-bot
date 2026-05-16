@@ -1,0 +1,17 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8787
+  },
+  "risk": {
+    "allowed_symbols": ["US100", "NAS100", "NQ", "MNQ"],
+    "max_trades_per_day": 3,
+    "cooldown_seconds": 300,
+    "default_quantity": 0.03,
+    "allow_live_orders": false
+  },
+  "telegram": {
+    "notify_accepted": true,
+    "notify_rejected": false
+  }
+}

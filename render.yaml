@@ -1,0 +1,11 @@
+services:
+  - type: worker
+    name: us100-market-volatility-bot
+    env: python
+    buildCommand: "python --version"
+    startCommand: "python market_reason_mvp/market_volatility_bot.py --threshold-points=10"
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false

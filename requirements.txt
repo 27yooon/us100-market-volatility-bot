@@ -1,1 +1,2 @@
-# The market volatility bot currently uses only Python standard-library modules.
+# The market signal bots currently use only Python standard-library modules.
+# No paid Python packages are required.

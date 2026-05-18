@@ -4,7 +4,7 @@ services:
     runtime: python
     schedule: "*/5 * * * *"
     buildCommand: "python --version"
-    startCommand: "python market_reason_mvp/market_signal_bot.py --once --score-threshold=8 --min-rr=1.30"
+    startCommand: "python market_reason_mvp/market_signal_bot.py --once --symbol=NQ=F --min-level=3 --min-rr=1.30"
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false

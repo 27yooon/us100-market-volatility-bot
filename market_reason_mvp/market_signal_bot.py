@@ -44,10 +44,10 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 KST = ZoneInfo("Asia/Seoul")
 YAHOO_CHART_BASE = "https://query1.finance.yahoo.com/v8/finance/chart"
 
-DEFAULT_SYMBOL = "^NDX"
+DEFAULT_SYMBOL = "NQ=F"
 DEFAULT_INTERVAL = "5m"
 DEFAULT_RANGE = "5d"
-DEFAULT_SCORE_THRESHOLD = 8
+DEFAULT_MIN_LEVEL = 3
 DEFAULT_MIN_RR = 1.30
 DEFAULT_POLL_SECONDS = 60
 DEFAULT_HEARTBEAT_MINUTES = 10
@@ -129,6 +129,9 @@ class PivotLevels:
 class SignalCandidate:
     side: str
     setup_type: str
+    level: int
+    level_name: str
+    decision: str
     score: int
     entry: float
     stop: float
@@ -138,6 +141,17 @@ class SignalCandidate:
     invalidation: str
     reasons: list[str]
     cautions: list[str]
+    bar_time: int
+
+
+@dataclass(frozen=True)
+class WatchStatus:
+    level: int
+    level_name: str
+    decision: str
+    reasons: list[str]
+    cautions: list[str]
+    current_price: float
     bar_time: int
 
 
@@ -465,6 +479,41 @@ def rr_for(side: str, entry: float, stop: float, target: float) -> float:
     return reward / risk
 
 
+def level_name_for(level: int) -> str:
+    if level >= 5:
+        return "진입 금지"
+    if level == 4:
+        return "강한 진입 후보"
+    if level == 3:
+        return "진입 후보"
+    if level == 2:
+        return "대기"
+    return "관심"
+
+
+def decision_for(level: int, side: str | None = None) -> str:
+    if level >= 5:
+        return "진입 금지"
+    if level == 4 and side:
+        return f"{side} 강한 후보. 진입/손절/익절 확인"
+    if level == 3 and side:
+        return f"{side} 진입 검토 가능"
+    if level == 2:
+        return "조건 형성 중. 아직 진입 아님"
+    return "중요 자리 접근 여부만 관찰"
+
+
+def classify_level(score: int, rr: float, cautions: list[str], min_rr: float) -> int:
+    effective_score = score - len(cautions)
+    if effective_score >= 8 and rr >= max(1.60, min_rr):
+        return 4
+    if effective_score >= 5 and rr >= min_rr:
+        return 3
+    if effective_score >= 3:
+        return 2
+    return 1
+
+
 def build_candidate(
     side: str,
     setup_type: str,
@@ -475,16 +524,23 @@ def build_candidate(
     bar_time: int,
     reasons: list[str],
     cautions: list[str],
+    min_rr: float,
 ) -> SignalCandidate:
+    score = len(reasons)
+    rr = rr_for(side, entry, stop, target1)
+    level = classify_level(score, rr, cautions, min_rr)
     return SignalCandidate(
         side=side,
         setup_type=setup_type,
-        score=len(reasons),
+        level=level,
+        level_name=level_name_for(level),
+        decision=decision_for(level, side),
+        score=score,
         entry=entry,
         stop=stop,
         target1=target1,
         target2=target2,
-        rr=rr_for(side, entry, stop, target1),
+        rr=rr,
         invalidation=(
             f"{stop:.2f} 아래 5분봉 마감" if side == "LONG" else f"{stop:.2f} 위 5분봉 마감"
         ),
@@ -563,7 +619,7 @@ def analyze_signal(
 
         stop = min(bar.low for bar in bars[-6:]) - buffer
         target1, target2 = choose_targets("LONG", last.close, pivots, bars)
-        candidate = build_candidate("LONG", "피보 눌림 롱", last.close, stop, target1, target2, last.ts, reasons, cautions)
+        candidate = build_candidate("LONG", "피보 눌림 롱", last.close, stop, target1, target2, last.ts, reasons, cautions, min_rr)
         if near_fib and candidate.rr >= min_rr:
             candidates.append(candidate)
 
@@ -593,7 +649,7 @@ def analyze_signal(
 
         stop = max(bar.high for bar in bars[-6:]) + buffer
         target1, target2 = choose_targets("SHORT", last.close, pivots, bars)
-        candidate = build_candidate("SHORT", "피보 반등 숏", last.close, stop, target1, target2, last.ts, reasons, cautions)
+        candidate = build_candidate("SHORT", "피보 반등 숏", last.close, stop, target1, target2, last.ts, reasons, cautions, min_rr)
         if near_fib and candidate.rr >= min_rr:
             candidates.append(candidate)
 
@@ -615,7 +671,7 @@ def analyze_signal(
             cautions.append("시장 보조지표는 아직 상승 우위")
         stop = max(bar.high for bar in bars[-6:]) + buffer
         target1, target2 = choose_targets("SHORT", last.close, pivots, bars)
-        candidate = build_candidate("SHORT", "상승 피로 숏", last.close, stop, target1, target2, last.ts, reasons, cautions)
+        candidate = build_candidate("SHORT", "상승 피로 숏", last.close, stop, target1, target2, last.ts, reasons, cautions, min_rr)
         if candidate.rr >= min_rr:
             candidates.append(candidate)
 
@@ -636,18 +692,103 @@ def analyze_signal(
             cautions.append("시장 보조지표는 아직 하락 우위")
         stop = min(bar.low for bar in bars[-6:]) - buffer
         target1, target2 = choose_targets("LONG", last.close, pivots, bars)
-        candidate = build_candidate("LONG", "하락 피로 롱", last.close, stop, target1, target2, last.ts, reasons, cautions)
+        candidate = build_candidate("LONG", "하락 피로 롱", last.close, stop, target1, target2, last.ts, reasons, cautions, min_rr)
         if candidate.rr >= min_rr:
             candidates.append(candidate)
 
     if not candidates:
         return None
 
-    # Count only core reasons for score; cautions do not remove the candidate but lower its rank.
-    for note in context_notes[:2]:
-        if note not in candidates[0].reasons:
-            pass
-    return max(candidates, key=lambda candidate: (candidate.score - len(candidate.cautions), candidate.rr))
+    # Core reasons raise the rank; cautions lower it.
+    return max(candidates, key=lambda candidate: (candidate.level, candidate.score - len(candidate.cautions), candidate.rr))
+
+
+def build_watch_status(
+    bars: list[Bar],
+    pivots: PivotLevels | None,
+    context: list[MarketMove],
+) -> WatchStatus:
+    closes = [bar.close for bar in bars]
+    fast = ema(closes, 20)
+    slow = ema(closes, 50)
+    atr_values = atr(bars, 14)
+    last = bars[-1]
+    atr_value = atr_values[-1]
+    touch_distance = atr_value * 0.45
+    buffer = atr_value * 0.20
+
+    impulse = find_impulse(bars, atr_value)
+    fib_levels = fib_zone_for_impulse(impulse) if impulse else {}
+    pivot_levels: dict[str, float] = {}
+    if pivots:
+        pivot_levels = {"P": pivots.pp, "R1": pivots.r1, "R2": pivots.r2, "S1": pivots.s1, "S2": pivots.s2}
+
+    recent_high = max(bar.high for bar in bars[-36:-1])
+    recent_low = min(bar.low for bar in bars[-36:-1])
+    structure_levels = {"전고점": recent_high, "전저점": recent_low, **pivot_levels}
+
+    near_fib, fib_name, fib_level = price_near_any(last.close, fib_levels, touch_distance)
+    near_level, level_name, level_value = price_near_any(last.close, structure_levels, touch_distance)
+    stretched_up = last.close > fast[-1] + atr_value * 1.8
+    stretched_down = last.close < fast[-1] - atr_value * 1.8
+    volume_is_drying = volume_drying(bars)
+    range_is_shrinking = range_shrinking(bars)
+    failed_high = failed_high_breakout(bars, 5, buffer)
+    failed_low = failed_low_breakdown(bars, 5, buffer)
+    long_bias, short_bias, _ = score_market_bias(context)
+
+    reasons: list[str] = []
+    cautions: list[str] = []
+
+    if impulse:
+        reasons.append("상승 충격파 이후" if impulse[0] == "UP" else "하락 충격파 이후")
+    else:
+        reasons.append("뚜렷한 충격파 없음")
+    if near_fib:
+        reasons.append(f"{fib_name} 근처({fib_level:.2f})")
+    if near_level:
+        reasons.append(f"주요 레벨 {level_name} 근처({level_value:.2f})")
+    if volume_is_drying:
+        reasons.append("거래량 감소")
+    if range_is_shrinking:
+        reasons.append("봉 크기 축소")
+    if failed_high:
+        reasons.append("고점 돌파 실패")
+    if failed_low:
+        reasons.append("저점 이탈 실패")
+    if fast[-1] >= slow[-1]:
+        reasons.append("EMA 20/50 상승 우위")
+    else:
+        reasons.append("EMA 20/50 하락 우위")
+    if long_bias > short_bias:
+        reasons.append("시장 보조지표는 롱 우위")
+    elif short_bias > long_bias:
+        reasons.append("시장 보조지표는 숏 우위")
+
+    if stretched_up:
+        cautions.append("상승 장대 추격 위험")
+    if stretched_down:
+        cautions.append("하락 장대 추격 위험")
+
+    setup_count = sum([near_fib, near_level, volume_is_drying, range_is_shrinking, failed_high or failed_low])
+    if (stretched_up or stretched_down) and not near_fib and not near_level:
+        level = 5
+    elif setup_count >= 4:
+        level = 2
+    elif near_fib or near_level:
+        level = 1
+    else:
+        level = 1
+
+    return WatchStatus(
+        level=level,
+        level_name=level_name_for(level),
+        decision=decision_for(level),
+        reasons=reasons[:8],
+        cautions=cautions,
+        current_price=last.close,
+        bar_time=last.ts,
+    )
 
 
 def format_context_line(move: MarketMove) -> str:
@@ -665,8 +806,9 @@ def format_signal_message(
 ) -> str:
     target2_text = f"{signal.target2:.2f}" if signal.target2 is not None else "없음"
     lines = [
-        f"[{signal.side} 후보 / 점수 {signal.score}점]",
+        f"[LEVEL {signal.level} / {signal.level_name} / {signal.side}]",
         "",
+        f"판정: {signal.decision}",
         f"종목: {symbol}",
         f"셋업: {signal.setup_type}",
         f"시간: {kst_time_string(signal.bar_time)}",
@@ -679,7 +821,7 @@ def format_signal_message(
         f"손익비: {signal.rr:.2f}R",
         f"무효 조건: {signal.invalidation}",
         "",
-        "근거:",
+        f"근거 {signal.score}개:",
     ]
     lines.extend(f"- {reason}" for reason in signal.reasons)
     if signal.cautions:
@@ -696,6 +838,31 @@ def format_signal_message(
         lines.extend(f"- {headline[:110]}" for headline in headlines[:4])
     else:
         lines.append("뉴스 체크: 주요 키워드 헤드라인 없음")
+    return "\n".join(lines)
+
+
+def format_watch_message(symbol: str, status: WatchStatus, context: list[MarketMove]) -> str:
+    lines = [
+        f"[LEVEL {status.level} / {status.level_name}]",
+        "",
+        f"판정: {status.decision}",
+        f"종목: {symbol}",
+        f"현재가: {status.current_price:.2f}",
+        f"시간: {kst_time_string(status.bar_time)}",
+        "",
+        "현재 체크:",
+    ]
+    lines.extend(f"- {reason}" for reason in status.reasons)
+    if status.cautions:
+        lines.append("")
+        lines.append("주의:")
+        lines.extend(f"- {caution}" for caution in status.cautions)
+    if context:
+        lines.append("")
+        lines.append("시장 체크:")
+        lines.extend(format_context_line(move) for move in context[:6])
+    lines.append("")
+    lines.append("알림 상태: LEVEL 3 이상일 때만 진입 후보 알림")
     return "\n".join(lines)
 
 
@@ -885,7 +1052,7 @@ def run_once(
     symbol: str,
     interval: str,
     range_name: str,
-    score_threshold: int,
+    min_level: int,
     min_rr: float,
     dry_run: bool,
     chart: bool,
@@ -899,13 +1066,14 @@ def run_once(
     pivots = compute_pivots(symbol)
     context = fetch_context_snapshot()
     signal = analyze_signal(bars, pivots, context, min_rr)
-    if signal is None or signal.score < score_threshold:
+    if signal is None or signal.level < min_level:
         if not quiet_no_signal:
-            print(f"No qualified signal for {symbol}.")
+            status = build_watch_status(bars, pivots, context)
+            print(format_watch_message(symbol, status, context))
         return 0
 
     state = load_state()
-    dedupe_key = f"{symbol}:{signal.bar_time}:{signal.side}:{signal.setup_type}:{round(signal.entry, 1)}"
+    dedupe_key = f"{symbol}:{signal.bar_time}:L{signal.level}:{signal.side}:{signal.setup_type}:{round(signal.entry, 1)}"
     if state.get("last_signal_key") == dedupe_key:
         if not quiet_no_signal:
             print("Duplicate signal already sent.")
@@ -931,6 +1099,9 @@ def run_once(
         "symbol": symbol,
         "side": signal.side,
         "setup_type": signal.setup_type,
+        "level": signal.level,
+        "level_name": signal.level_name,
+        "decision": signal.decision,
         "score": signal.score,
         "entry": signal.entry,
         "stop": signal.stop,
@@ -961,7 +1132,7 @@ def run_loop(
     symbol: str,
     interval: str,
     range_name: str,
-    score_threshold: int,
+    min_level: int,
     min_rr: float,
     poll_seconds: int,
     heartbeat_minutes: int,
@@ -970,17 +1141,17 @@ def run_loop(
 ) -> int:
     print(
         f"Starting signal loop. symbol={symbol} interval={interval} "
-        f"score>={score_threshold} min_rr={min_rr:.2f} poll={poll_seconds}s"
+        f"level>={min_level} min_rr={min_rr:.2f} poll={poll_seconds}s"
     )
     checks_since_heartbeat = 0
     heartbeat_every_checks = max(1, int((heartbeat_minutes * 60) / poll_seconds))
     while True:
         try:
-            run_once(symbol, interval, range_name, score_threshold, min_rr, dry_run, chart, quiet_no_signal=True)
+            run_once(symbol, interval, range_name, min_level, min_rr, dry_run, chart, quiet_no_signal=True)
             checks_since_heartbeat += 1
             if checks_since_heartbeat >= heartbeat_every_checks:
                 now_kst = datetime.now(tz=timezone.utc).astimezone(KST).strftime("%Y-%m-%d %H:%M:%S KST")
-                print(f"Waiting... no qualified signal yet for {symbol} ({now_kst})")
+                print(f"Waiting... no LEVEL {min_level}+ signal yet for {symbol} ({now_kst})")
                 checks_since_heartbeat = 0
         except Exception as exc:  # noqa: BLE001
             append_log({"sent_at": datetime.now(tz=timezone.utc).isoformat(), "type": "error", "message": str(exc)})
@@ -996,7 +1167,7 @@ def parse_args(argv: list[str]) -> dict[str, Any]:
         "symbol": DEFAULT_SYMBOL,
         "interval": DEFAULT_INTERVAL,
         "range_name": DEFAULT_RANGE,
-        "score_threshold": DEFAULT_SCORE_THRESHOLD,
+        "min_level": DEFAULT_MIN_LEVEL,
         "min_rr": DEFAULT_MIN_RR,
         "poll_seconds": DEFAULT_POLL_SECONDS,
         "heartbeat_minutes": DEFAULT_HEARTBEAT_MINUTES,
@@ -1008,8 +1179,11 @@ def parse_args(argv: list[str]) -> dict[str, Any]:
             config["interval"] = arg.split("=", 1)[1]
         elif arg.startswith("--range="):
             config["range_name"] = arg.split("=", 1)[1]
+        elif arg.startswith("--min-level="):
+            config["min_level"] = int(arg.split("=", 1)[1])
         elif arg.startswith("--score-threshold="):
-            config["score_threshold"] = int(arg.split("=", 1)[1])
+            # Backward compatibility with the older score wording.
+            config["min_level"] = 4 if int(arg.split("=", 1)[1]) >= 8 else 3
         elif arg.startswith("--min-rr="):
             config["min_rr"] = float(arg.split("=", 1)[1])
         elif arg.startswith("--poll="):
@@ -1033,7 +1207,7 @@ def main(argv: list[str]) -> int:
             config["symbol"],
             config["interval"],
             config["range_name"],
-            config["score_threshold"],
+            config["min_level"],
             config["min_rr"],
             config["dry_run"],
             config["chart"],
@@ -1042,7 +1216,7 @@ def main(argv: list[str]) -> int:
         config["symbol"],
         config["interval"],
         config["range_name"],
-        config["score_threshold"],
+        config["min_level"],
         config["min_rr"],
         config["poll_seconds"],
         config["heartbeat_minutes"],

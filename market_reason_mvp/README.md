@@ -69,10 +69,12 @@ python3 /Users/yooon/Desktop/쭈꾸미/market_reason_mvp/market_signal_
 - 기본 명령:
 
 ```bash
-python market_reason_mvp/market_signal_bot.py --once --score-threshold=8 --min-rr=1.30
+python market_reason_mvp/market_signal_bot.py --once --symbol=NQ=F --min-level=3 --min-rr=1.30
 ```
 
 Render Cron Job은 실행 시간 기준 과금이며, Render 문서 기준 Cron Job 서비스는 최소 월 $1 비용이 있다.
+
+기본 종목은 `NQ=F`다. `^NDX`는 미국 현물지수라 장외 시간에는 데이터가 멈출 수 있어서, US100 흐름 확인에는 나스닥 선물인 `NQ=F`를 우선한다.
 
 ## 기존 단순 급변 봇
 

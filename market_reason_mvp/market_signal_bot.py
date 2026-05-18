@@ -483,24 +483,36 @@ def level_name_for(level: int) -> str:
     if level >= 5:
         return "진입 금지"
     if level == 4:
-        return "강한 진입 후보"
+        return "강한 후보"
     if level == 3:
         return "진입 후보"
     if level == 2:
         return "대기"
-    return "관심"
+    return "보기만"
 
 
 def decision_for(level: int, side: str | None = None) -> str:
     if level >= 5:
-        return "진입 금지"
+        return "건드리지 않기. 추격 또는 위험 구간"
     if level == 4 and side:
-        return f"{side} 강한 후보. 진입/손절/익절 확인"
+        return f"{side} 우선 확인. 손절/익절이 맞으면 진입 검토"
     if level == 3 and side:
-        return f"{side} 진입 검토 가능"
+        return f"{side} 진입 후보. 차트 보고 최종 확인"
     if level == 2:
-        return "조건 형성 중. 아직 진입 아님"
-    return "중요 자리 접근 여부만 관찰"
+        return "기다리기. 조건 형성 중이지만 아직 진입 아님"
+    return "보기만. 아직 매매 자리 아님"
+
+
+def next_action_for(level: int) -> str:
+    if level >= 5:
+        return "진입하지 말고 대기"
+    if level == 4:
+        return "차트 열고 진입/손절/익절 즉시 확인"
+    if level == 3:
+        return "차트 열고 확인 후 소액 또는 계획대로만 검토"
+    if level == 2:
+        return "차트는 봐도 되지만 아직 누르지 않기"
+    return "아무것도 하지 말고 보기만"
 
 
 def classify_level(score: int, rr: float, cautions: list[str], min_rr: float) -> int:
@@ -798,6 +810,10 @@ def format_context_line(move: MarketMove) -> str:
     return f"{move.label}: {arrow} {move.move_pct:+.2f}% ({move.close:.2f})"
 
 
+def section(title: str) -> list[str]:
+    return ["", "━━━━━━━━━━━━", title, "━━━━━━━━━━━━"]
+
+
 def format_signal_message(
     symbol: str,
     signal: SignalCandidate,
@@ -806,37 +822,51 @@ def format_signal_message(
 ) -> str:
     target2_text = f"{signal.target2:.2f}" if signal.target2 is not None else "없음"
     lines = [
-        f"[LEVEL {signal.level} / {signal.level_name} / {signal.side}]",
+        f"[LEVEL {signal.level} / {signal.level_name}]",
+        f"{symbol} · {signal.side} 후보 · {signal.entry:.2f}",
         "",
-        f"판정: {signal.decision}",
-        f"종목: {symbol}",
-        f"셋업: {signal.setup_type}",
-        f"시간: {kst_time_string(signal.bar_time)}",
-        "",
-        "매매 기준:",
-        f"진입 후보: {signal.entry:.2f}",
-        f"손절: {signal.stop:.2f}",
-        f"1차 익절: {signal.target1:.2f}",
-        f"2차 익절: {target2_text}",
-        f"손익비: {signal.rr:.2f}R",
-        f"무효 조건: {signal.invalidation}",
-        "",
-        f"근거 {signal.score}개:",
+        "방향:",
+        signal.side,
     ]
+    lines.extend(section("판단"))
+    lines.extend(
+        [
+            signal.decision,
+            "",
+            "지금 할 일:",
+            next_action_for(signal.level),
+        ]
+    )
+    lines.extend(section("가격"))
+    lines.extend(
+        [
+            f"진입 후보: {signal.entry:.2f}",
+            f"손절: {signal.stop:.2f}",
+            f"익절: {signal.target1:.2f} / {target2_text}",
+            f"손익비: {signal.rr:.2f}R",
+            f"무효: {signal.invalidation}",
+        ]
+    )
+    lines.extend(section("근거"))
     lines.extend(f"- {reason}" for reason in signal.reasons)
+    lines.extend(
+        [
+            "",
+            f"셋업: {signal.setup_type}",
+            f"시간: {kst_time_string(signal.bar_time)}",
+        ]
+    )
     if signal.cautions:
-        lines.append("")
-        lines.append("주의:")
+        lines.extend(section("주의"))
         lines.extend(f"- {caution}" for caution in signal.cautions)
     if context:
-        lines.append("")
-        lines.append("시장 체크:")
+        lines.extend(section("시장 체크"))
         lines.extend(format_context_line(move) for move in context[:6])
-    lines.append("")
     if headlines:
-        lines.append("뉴스 체크:")
+        lines.extend(section("뉴스 체크"))
         lines.extend(f"- {headline[:110]}" for headline in headlines[:4])
     else:
+        lines.extend(section("뉴스 체크"))
         lines.append("뉴스 체크: 주요 키워드 헤드라인 없음")
     return "\n".join(lines)
 
@@ -844,25 +874,38 @@ def format_signal_message(
 def format_watch_message(symbol: str, status: WatchStatus, context: list[MarketMove]) -> str:
     lines = [
         f"[LEVEL {status.level} / {status.level_name}]",
-        "",
-        f"판정: {status.decision}",
-        f"종목: {symbol}",
-        f"현재가: {status.current_price:.2f}",
-        f"시간: {kst_time_string(status.bar_time)}",
-        "",
-        "현재 체크:",
+        f"{symbol} · 방향 없음 · {status.current_price:.2f}",
     ]
+    lines.extend(section("판단"))
+    lines.extend(
+        [
+            status.decision,
+            "",
+            "지금 할 일:",
+            next_action_for(status.level),
+        ]
+    )
+    lines.extend(section("현재 체크"))
     lines.extend(f"- {reason}" for reason in status.reasons)
+    lines.extend(
+        [
+            "",
+            f"시간: {kst_time_string(status.bar_time)}",
+        ]
+    )
     if status.cautions:
-        lines.append("")
-        lines.append("주의:")
+        lines.extend(section("주의"))
         lines.extend(f"- {caution}" for caution in status.cautions)
     if context:
-        lines.append("")
-        lines.append("시장 체크:")
+        lines.extend(section("시장 체크"))
         lines.extend(format_context_line(move) for move in context[:6])
-    lines.append("")
-    lines.append("알림 상태: LEVEL 3 이상일 때만 진입 후보 알림")
+    lines.extend(section("알림 기준"))
+    lines.extend(
+        [
+            "LEVEL 3 이상일 때만 진입 후보 알림",
+            "1 보기만 / 2 대기 / 3 진입 후보 / 4 강한 후보 / 5 금지",
+        ]
+    )
     return "\n".join(lines)
 
 

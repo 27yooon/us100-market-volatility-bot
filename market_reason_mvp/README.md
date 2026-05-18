@@ -97,6 +97,8 @@ python3 /Users/yooon/Desktop/쭈꾸미/market_reason_mvp/market_volatil
 
 지금 알림에는 아래가 같이 들어간다.
 
+- 레벨: 보기만 / 대기 / 진입 후보 / 강한 후보 / 진입 금지
+- 다음 행동
 - 방향: LONG / SHORT
 - 셋업 이름
 - 진입 후보

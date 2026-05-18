@@ -70,3 +70,11 @@ python3 /Users/yooon/Desktop/쭈꾸미/market_reason_mvp/market_volatility_bot.p
 - 손절/익절/손익비는 최종 통과 조건
 
 알림에는 반드시 방향, 근거, 손절, 익절, 무효 조건이 들어가야 한다.
+
+## 초보자용 레벨 표시
+
+- `LEVEL 1 / 보기만`: 아무것도 하지 않기
+- `LEVEL 2 / 대기`: 차트는 봐도 되지만 아직 진입 아님
+- `LEVEL 3 / 진입 후보`: 차트 보고 최종 확인
+- `LEVEL 4 / 강한 후보`: 우선 확인할 자리
+- `LEVEL 5 / 진입 금지`: 건드리지 않기

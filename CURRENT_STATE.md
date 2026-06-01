@@ -399,8 +399,33 @@
   - Background Worker Starter는 24시간 기준 월 약 `$7`
   - 이번 주만 돌리면 기간 비례로 예상
 - 현재 블로커:
-  - Chrome Render 대시보드가 `https://dashboard.render.com/login` 상태
-  - 사용자가 Render 로그인 후 이어서 Worker 생성/재개 필요
+  - 없음. Render Worker 생성 및 실행 확인 완료.
+
+## Render 실행 확인
+
+- 확인 시각: 2026-06-01 22:39~22:40 KST
+- Render 서비스:
+  - 이름: `us100-dual-paper-worker`
+  - 타입: Background Worker
+  - 서비스 ID: `srv-d8eomv6k1jcs73a6vro0`
+  - 로그 URL: `https://dashboard.render.com/worker/srv-d8eomv6k1jcs73a6vro0/logs`
+  - 상태: `Live`
+  - 플랜: Starter `$7/month`
+  - GitHub: `27yooon/us100-market-volatility-bot`
+  - 브랜치: `main`
+  - 배포 커밋: `93edd4f Prepare zukkumi two-version testing`
+- 실제 실행 로그:
+  - `==> Running 'python market_reason_mvp/render_dual_paper_worker.py --symbol=NQ=F --poll=300 --reset'`
+  - `2026-06-01 22:39:50 KST START`
+  - `2026-06-01 22:39:51 KST HEARTBEAT`
+  - 가격: `NQ=F 30338.0`
+  - `zukkumi_rules`: trades 0, wins 0, losses 0, pnl 0, open false
+  - `public_indicator_rules`: trades 0, wins 0, losses 0, pnl 0, open false
+- 텔레그램:
+  - 사용 안 함
+- 후속 체크:
+  - Codex heartbeat `쭈꾸미 Render 24시간 감시 상태 확인`
+  - 2026-06-06 06:00 KST까지 약 6시간마다 Render/로컬 상태 확인
 
 ## 현재 실행 중인 모의매매 감시
 

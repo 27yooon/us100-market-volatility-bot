@@ -94,6 +94,49 @@ NEWS_KEYWORDS = [
     "war",
 ]
 
+NEWS_TAG_RULES: list[tuple[str, tuple[str, ...], str]] = [
+    (
+        "연준/금리",
+        ("fed", "fomc", "powell", "treasury", "yield"),
+        "금리 민감 뉴스. 나스닥 급변이면 추격보다 확인 우선",
+    ),
+    (
+        "물가",
+        ("inflation", "cpi", "pce", "ppi"),
+        "물가 뉴스. 금리 기대가 바뀌면 방향이 빠르게 이어질 수 있음",
+    ),
+    (
+        "고용",
+        ("jobs", "payroll", "unemployment"),
+        "고용 뉴스. 장 초반 변동성과 가짜 돌파 주의",
+    ),
+    (
+        "달러",
+        ("dollar", "dxy"),
+        "달러 관련 뉴스. 달러 강세면 기술주에는 부담 가능",
+    ),
+    (
+        "유가",
+        ("oil", "wti", "crude"),
+        "유가 관련 뉴스. 인플레/지정학 리스크와 함께 확인",
+    ),
+    (
+        "관세/무역",
+        ("tariff", "trade", "china"),
+        "관세나 중국 이슈. 뉴스성 급등락이면 반대매매 조심",
+    ),
+    (
+        "반도체/AI",
+        ("nvidia", "semiconductor", "ai"),
+        "나스닥 주도주 뉴스. NQ 방향성에 직접 영향 가능",
+    ),
+    (
+        "지정학",
+        ("israel", "iran", "ukraine", "war"),
+        "지정학 뉴스. 급변 시 진입 근거보다 위험 필터로 사용",
+    ),
+]
+
 
 @dataclass(frozen=True)
 class Bar:
@@ -334,6 +377,45 @@ def fetch_relevant_headlines(limit: int = 4) -> list[str]:
     return headlines
 
 
+def summarize_news_for_user(headlines: list[str]) -> list[str]:
+    if not headlines:
+        return ["주요 키워드 헤드라인 없음"]
+
+    lower_headlines = [headline.lower() for headline in headlines]
+    lines: list[str] = []
+    used_labels: set[str] = set()
+    for label, keywords, note in NEWS_TAG_RULES:
+        count = sum(1 for headline in lower_headlines if any(keyword in headline for keyword in keywords))
+        if count == 0:
+            continue
+        used_labels.add(label)
+        lines.append(f"- {label}: 관련 뉴스 {count}개. {note}")
+
+    if not lines:
+        return ["- 관련 뉴스는 있으나 핵심 키워드가 약함. 차트 반응 우선"]
+
+    if len(used_labels) >= 3:
+        lines.append("- 여러 뉴스가 섞임: 방향 단정 금지, 차트 확인 우선")
+    return lines[:5]
+
+
+def summarize_news_tags(headlines: list[str]) -> str:
+    if not headlines:
+        return "특이 뉴스 없음"
+
+    lower_headlines = [headline.lower() for headline in headlines]
+    labels: list[str] = []
+    for label, keywords, _ in NEWS_TAG_RULES:
+        if any(any(keyword in headline for keyword in keywords) for headline in lower_headlines):
+            labels.append(label)
+
+    if not labels:
+        return "뉴스 있음, 핵심 키워드 약함"
+    if len(labels) > 3:
+        return ", ".join(labels[:3]) + " 등"
+    return ", ".join(labels)
+
+
 def range_of(bar: Bar) -> float:
     return max(bar.high - bar.low, 0.0001)
 
@@ -411,6 +493,223 @@ def price_near_any(price: float, levels: dict[str, float], max_distance: float) 
     return distance <= max_distance, name, level
 
 
+def detect_bottom_base_long(
+    bars: list[Bar],
+    support_levels: dict[str, float],
+    fast_ema: float,
+    atr_value: float,
+    buffer: float,
+    touch_distance: float,
+) -> tuple[float, float, list[str], str] | None:
+    """Find the user's pattern: sharp low, sideways base, then wait for breakout."""
+    if len(bars) < 35 or atr_value <= 0:
+        return None
+
+    for base_len in range(4, 11):
+        if len(bars) < base_len + 10:
+            continue
+
+        base = bars[-base_len:]
+        pre = bars[-base_len - 10 : -base_len]
+        base_lows = [bar.low for bar in base]
+        base_high = max(bar.high for bar in base)
+        base_low = min(base_lows)
+        base_range = base_high - base_low
+        low_pos = base_lows.index(base_low)
+        after_low = base[low_pos + 1 :]
+        last = bars[-1]
+
+        if low_pos > max(1, base_len // 2):
+            continue
+        if len(after_low) < 2:
+            continue
+
+        drop_into_base = max(bar.high for bar in pre) - base_low
+        if drop_into_base < atr_value * 0.9:
+            continue
+        if base_range > atr_value * 1.8:
+            continue
+
+        lower_low_failed = min(bar.low for bar in after_low) >= base_low - buffer
+        closes_defended = min(bar.close for bar in after_low) >= base_low + buffer * 0.25
+        if not (lower_low_failed and closes_defended):
+            continue
+
+        pre_avg_range = sum(range_of(bar) for bar in pre[-6:]) / 6.0
+        base_avg_range = sum(range_of(bar) for bar in base[-3:]) / 3.0
+        base_is_quiet = base_avg_range <= max(atr_value * 1.05, pre_avg_range * 0.85)
+        if not base_is_quiet:
+            continue
+
+        support_hits = [
+            (name, value)
+            for name, value in support_levels.items()
+            if base_low - touch_distance <= value <= base_high + touch_distance
+        ]
+        if support_hits:
+            support_name, support_value = min(
+                support_hits,
+                key=lambda item: min(abs(item[1] - base_low), abs(item[1] - base_high), abs(item[1] - last.close)),
+            )
+        else:
+            near_support, support_name, support_value = price_near_any(base_low, support_levels, touch_distance)
+            if not near_support:
+                continue
+
+        reasons = [
+            "바닥 형성 후 횡보",
+            "저점 재이탈 실패",
+            "작은 봉으로 매도세 약화",
+            f"주요 지지 {support_name} 근처({support_value:.2f})",
+        ]
+        if last.close >= fast_ema - atr_value * 0.15:
+            reasons.append("EMA20 근처 회복")
+        if volume_drying(bars):
+            reasons.append("거래량 감소")
+
+        entry_trigger = base_high
+        stop = base_low - buffer
+        return entry_trigger, stop, reasons, support_name
+
+    return None
+
+
+def detect_pivot_rebound_long(
+    bars: list[Bar],
+    pivots: PivotLevels | None,
+    fast_ema: float,
+    slow_ema: float,
+    atr_value: float,
+    buffer: float,
+    touch_distance: float,
+) -> tuple[float, float, list[str], list[str]] | None:
+    """Find a faster P-line bounce before a full sideways base forms."""
+    if pivots is None or len(bars) < 25 or atr_value <= 0:
+        return None
+
+    pp = pivots.pp
+    recent = bars[-8:]
+    touch_indexes = [
+        index
+        for index, bar in enumerate(recent)
+        if bar.low <= pp + touch_distance and bar.high >= pp - touch_distance
+    ]
+    if not touch_indexes:
+        return None
+
+    last_touch = touch_indexes[-1]
+    after_touch = recent[last_touch:]
+    last = recent[-1]
+
+    if any(bar.close < pp - buffer for bar in after_touch):
+        return None
+    if min(bar.low for bar in after_touch) > pp + touch_distance:
+        return None
+    if last.close <= pp + buffer:
+        return None
+    if last.close < fast_ema - atr_value * 0.15:
+        return None
+    if last.close - pp > atr_value * 2.4:
+        return None
+
+    recent_high = max(bar.high for bar in recent[-3:])
+    entry_trigger = recent_high
+    stop = min(min(bar.low for bar in after_touch), pp) - buffer
+    if stop >= entry_trigger:
+        return None
+
+    reasons = [
+        f"일봉 P라인 근접 후 회복({pp:.2f})",
+        "P라인 아래 5분봉 확정 이탈 실패",
+        "직전 눌림 후 다시 상승 시도",
+    ]
+    cautions: list[str] = []
+    if fast_ema >= slow_ema:
+        reasons.append("EMA 20/50 기준 상승 우위")
+    else:
+        cautions.append("EMA 20/50은 아직 하락 우위")
+    if volume_drying(bars):
+        reasons.append("거래량 감소 후 반등")
+
+    return entry_trigger, stop, reasons, cautions
+
+
+def detect_rounding_reversal(
+    bars: list[Bar],
+    atr_value: float,
+    buffer: float,
+) -> tuple[str, float, float, list[str], list[str]] | None:
+    """Find reversal bases that do not need a pivot touch."""
+    if len(bars) < 45 or atr_value <= 0:
+        return None
+
+    for base_len in range(5, 11):
+        if len(bars) < base_len + 14:
+            continue
+
+        base = bars[-base_len:]
+        pre = bars[-base_len - 12 : -base_len]
+        if len(pre) < 8:
+            continue
+
+        base_high = max(bar.high for bar in base)
+        base_low = min(bar.low for bar in base)
+        base_range = base_high - base_low
+        pre_high = max(bar.high for bar in pre)
+        pre_low = min(bar.low for bar in pre)
+        pre_avg_range = sum(range_of(bar) for bar in pre[-6:]) / 6.0
+        base_avg_range = sum(range_of(bar) for bar in base[-4:]) / 4.0
+
+        if base_range > atr_value * 1.75:
+            continue
+        if base_avg_range > max(atr_value * 1.00, pre_avg_range * 0.82):
+            continue
+
+        base_lows = [bar.low for bar in base]
+        base_highs = [bar.high for bar in base]
+        low_pos = base_lows.index(base_low)
+        high_pos = base_highs.index(base_high)
+        last = base[-1]
+        recent_ranges = [range_of(bar) for bar in base[-4:]]
+        candle_shrink = recent_ranges[-1] <= max(atr_value * 0.95, sum(recent_ranges[:-1]) / 3.0)
+
+        drop_into_base = pre_high - base_low
+        if drop_into_base >= atr_value * 1.25 and low_pos <= max(2, base_len // 2):
+            after_low = base[low_pos + 1 :]
+            if len(after_low) >= 2:
+                lower_low_failed = min(bar.low for bar in after_low) >= base_low - buffer
+                close_defended = min(bar.close for bar in after_low) >= base_low + buffer * 0.10
+                midpoint_recovered = last.close >= base_low + base_range * 0.45
+                if lower_low_failed and close_defended and midpoint_recovered and candle_shrink:
+                    reasons = [
+                        "피봇 미터치 라운딩 바닥",
+                        "하락 멈춤 후 봉 축소",
+                        "저점 재이탈 실패",
+                        "반대방향 확인봉 대기",
+                    ]
+                    cautions = ["피봇/주요 지지 터치 없는 역방향 시도"]
+                    return "LONG", base_high, base_low - buffer, reasons, cautions
+
+        rise_into_base = base_high - pre_low
+        if rise_into_base >= atr_value * 1.25 and high_pos <= max(2, base_len // 2):
+            after_high = base[high_pos + 1 :]
+            if len(after_high) >= 2:
+                higher_high_failed = max(bar.high for bar in after_high) <= base_high + buffer
+                close_rejected = max(bar.close for bar in after_high) <= base_high - buffer * 0.10
+                midpoint_lost = last.close <= base_high - base_range * 0.45
+                if higher_high_failed and close_rejected and midpoint_lost and candle_shrink:
+                    reasons = [
+                        "피봇 미터치 라운딩 천장",
+                        "상승 멈춤 후 봉 축소",
+                        "고점 재돌파 실패",
+                        "반대방향 확인봉 대기",
+                    ]
+                    cautions = ["피봇/주요 저항 터치 없는 역방향 시도"]
+                    return "SHORT", base_low, base_high + buffer, reasons, cautions
+
+    return None
+
+
 def score_market_bias(context: list[MarketMove]) -> tuple[int, int, list[str]]:
     long_bias = 0
     short_bias = 0
@@ -469,6 +768,49 @@ def choose_targets(side: str, entry: float, pivots: PivotLevels | None, bars: li
     if not below:
         return recent_low, None
     return below[0], below[1] if len(below) > 1 else None
+
+
+def daily_pivot_context(
+    side: str,
+    entry: float,
+    pivots: PivotLevels | None,
+    touch_distance: float,
+) -> tuple[list[str], list[str]]:
+    if pivots is None:
+        return [], ["일봉 피봇 확인 불가"]
+
+    levels = {"P": pivots.pp, "R1": pivots.r1, "R2": pivots.r2, "S1": pivots.s1, "S2": pivots.s2}
+    level_name, level_value, distance = nearest_level(entry, levels)
+    near_daily_pivot = distance <= touch_distance
+    reasons: list[str] = []
+    cautions: list[str] = []
+
+    if side == "LONG":
+        if near_daily_pivot and level_name in {"S1", "S2", "P"}:
+            reasons.append(f"일봉 피봇 지지 {level_name} 근처({level_value:.2f})")
+        elif near_daily_pivot:
+            cautions.append(f"일봉 피봇 {level_name} 근처라 롱 추격 주의")
+        else:
+            cautions.append("일봉 피봇 지지와 멀어 라운딩 단독 신뢰 낮음")
+
+        if entry >= pivots.pp:
+            reasons.append("일봉 P 위라 롱 방향 우위")
+        else:
+            cautions.append("일봉 P 아래라 롱은 역방향")
+    else:
+        if near_daily_pivot and level_name in {"R1", "R2", "P"}:
+            reasons.append(f"일봉 피봇 저항 {level_name} 근처({level_value:.2f})")
+        elif near_daily_pivot:
+            cautions.append(f"일봉 피봇 {level_name} 근처라 숏 추격 주의")
+        else:
+            cautions.append("일봉 피봇 저항과 멀어 라운딩 단독 신뢰 낮음")
+
+        if entry <= pivots.pp:
+            reasons.append("일봉 P 아래라 숏 방향 우위")
+        else:
+            cautions.append("일봉 P 위라 숏은 역방향")
+
+    return reasons, cautions
 
 
 def rr_for(side: str, entry: float, stop: float, target: float) -> float:
@@ -562,7 +904,95 @@ def build_candidate(
     )
 
 
-def analyze_signal(
+def build_pivot_rebound_confirmed(
+    bars: list[Bar],
+    pivots: PivotLevels | None,
+    context: list[MarketMove],
+    min_rr: float,
+) -> SignalCandidate | None:
+    if pivots is None or len(bars) < 80:
+        return None
+
+    closes = [bar.close for bar in bars]
+    fast = ema(closes, 20)
+    slow = ema(closes, 50)
+    atr_value = atr(bars, 14)[-1]
+    if atr_value <= 0:
+        return None
+
+    pp = pivots.pp
+    buffer = atr_value * 0.20
+    touch_distance = atr_value * 0.45
+    recent = bars[-8:]
+    last = recent[-1]
+    touch_indexes = [
+        index
+        for index, bar in enumerate(recent[:-1])
+        if bar.low <= pp + touch_distance and bar.high >= pp - touch_distance
+    ]
+    if not touch_indexes:
+        return None
+
+    last_touch = touch_indexes[-1]
+    after_touch = recent[last_touch:]
+    touch_low = min(bar.low for bar in after_touch)
+    if any(bar.close < pp - buffer for bar in after_touch):
+        return None
+    if touch_low > pp + touch_distance:
+        return None
+    if last.close <= pp + buffer:
+        return None
+    if last.close <= pp + touch_distance:
+        return None
+    if last.close < fast[-1] - atr_value * 0.15:
+        return None
+    if last.close - pp > atr_value * 2.2:
+        return None
+
+    entry = last.close
+    stop = touch_low - buffer
+    target1 = entry + 50.0
+    target2, _ = choose_targets("LONG", entry, pivots, bars)
+    if target2 <= target1:
+        target2 = None
+
+    reasons = [
+        f"일봉 P라인 근접 후 회복({pp:.2f})",
+        "P라인 아래 5분봉 확정 이탈 실패",
+        "회복봉이 직전 봉보다 높게 마감",
+    ]
+    cautions: list[str] = []
+    if fast[-1] >= slow[-1]:
+        reasons.append("EMA 20/50 기준 상승 우위")
+    else:
+        cautions.append("EMA 20/50은 아직 하락 우위")
+    if volume_drying(bars):
+        reasons.append("거래량 감소 후 반등")
+
+    long_bias, short_bias, _ = score_market_bias(context)
+    if long_bias > short_bias:
+        reasons.append("시장 보조지표가 롱에 우호적")
+    elif short_bias > long_bias + 1:
+        cautions.append("시장 보조지표가 롱에 불리")
+
+    candidate = build_candidate(
+        "LONG",
+        "P라인 반등 롱 확인",
+        entry,
+        stop,
+        target1,
+        target2,
+        last.ts,
+        reasons,
+        cautions,
+        min_rr,
+    )
+    if candidate.rr < min_rr:
+        return None
+    return candidate
+
+
+def build_raw_candidate(
     bars: list[Bar],
     pivots: PivotLevels | None,
     context: list[MarketMove],
@@ -604,6 +1034,119 @@ def analyze_signal(
 
     near_fib, fib_name, fib_level = price_near_any(last.close, fib_levels, touch_distance)
     near_level, level_name, level_value = price_near_any(last.close, structure_levels, touch_distance)
+
+    support_levels = {name: value for name, value in structure_levels.items() if name in {"P", "S1", "S2", "전저점"}}
+    pivot_rebound = detect_pivot_rebound_long(bars, pivots, fast[-1], slow[-1], atr_value, buffer, touch_distance)
+    if pivot_rebound:
+        entry_trigger, stop, reasons, cautions = pivot_rebound
+        if long_bias > short_bias:
+            reasons.append("시장 보조지표가 롱에 우호적")
+        elif short_bias > long_bias + 1:
+            cautions.append("시장 보조지표가 롱에 불리")
+
+        target1 = entry_trigger + 50.0
+        target2, _ = choose_targets("LONG", entry_trigger, pivots, bars)
+        if target2 <= target1:
+            target2 = None
+        candidate = build_candidate(
+            "LONG",
+            "P라인 반등 롱",
+            entry_trigger,
+            stop,
+            target1,
+            target2,
+            last.ts,
+            reasons,
+            cautions,
+            min_rr,
+        )
+        if candidate.rr >= min_rr:
+            candidates.append(candidate)
+
+    bottom_base = detect_bottom_base_long(bars, support_levels, fast[-1], atr_value, buffer, touch_distance)
+    if bottom_base:
+        entry_trigger, stop, reasons, support_name = bottom_base
+        setup_name = "P라인 바닥 횡보 롱" if support_name == "P" else "바닥 횡보 롱"
+        if support_name == "P":
+            reasons = ["P라인 터치/근접 후 횡보", *reasons]
+        cautions: list[str] = []
+        if trend_long:
+            reasons.append("EMA 20/50 기준 상승 우위")
+        elif last.close >= fast[-1] - atr_value * 0.15:
+            reasons.append("EMA20 회복 시도")
+        else:
+            cautions.append("아직 EMA 20/50 하락 우위")
+        if long_bias > short_bias:
+            reasons.append("시장 보조지표가 롱에 우호적")
+        elif short_bias > long_bias + 1:
+            cautions.append("시장 보조지표가 롱에 불리")
+
+        target1, target2 = choose_targets("LONG", entry_trigger, pivots, bars)
+        candidate = build_candidate(
+            "LONG",
+            setup_name,
+            entry_trigger,
+            stop,
+            target1,
+            target2,
+            last.ts,
+            reasons,
+            cautions,
+            min_rr,
+        )
+        if candidate.rr >= min_rr:
+            candidates.append(candidate)
+
+    rounding = detect_rounding_reversal(bars, atr_value, buffer)
+    if rounding:
+        side, entry_trigger, stop, reasons, cautions = rounding
+        if side == "LONG":
+            setup_name = "라운딩 바닥 롱"
+            if trend_long:
+                reasons.append("EMA 20/50 기준 상승 우위")
+            elif last.close >= fast[-1] - atr_value * 0.15:
+                reasons.append("EMA20 회복 시도")
+            else:
+                cautions.append("아직 EMA 20/50 하락 우위")
+            if long_bias > short_bias:
+                reasons.append("시장 보조지표가 롱에 우호적")
+            elif short_bias > long_bias + 1:
+                cautions.append("시장 보조지표가 롱에 불리")
+        else:
+            setup_name = "라운딩 천장 숏"
+            if trend_short:
+                reasons.append("EMA 20/50 기준 하락 우위")
+            elif last.close <= fast[-1] + atr_value * 0.15:
+                reasons.append("EMA20 이탈 시도")
+            else:
+                cautions.append("아직 EMA 20/50 상승 우위")
+            if short_bias > long_bias:
+                reasons.append("시장 보조지표가 숏에 우호적")
+            elif long_bias > short_bias + 1:
+                cautions.append("시장 보조지표가 숏에 불리")
+
+        if volume_is_drying:
+            reasons.append("거래량 감소")
+
+        pivot_reasons, pivot_cautions = daily_pivot_context(side, entry_trigger, pivots, touch_distance)
+        reasons.extend(pivot_reasons)
+        cautions.extend(pivot_cautions)
+
+        target1, target2 = choose_targets(side, entry_trigger, pivots, bars)
+        candidate = build_candidate(
+            side,
+            setup_name,
+            entry_trigger,
+            stop,
+            target1,
+            target2,
+            last.ts,
+            reasons,
+            cautions,
+            min_rr,
+        )
+        if candidate.rr >= min_rr:
+            candidates.append(candidate)
 
     if impulse and impulse[0] == "UP":
         reasons: list[str] = ["상승 충격파 이후 눌림 구간"]
@@ -715,6 +1258,71 @@ def analyze_signal(
     return max(candidates, key=lambda candidate: (candidate.level, candidate.score - len(candidate.cautions), candidate.rr))
 
 
+def confirm_candidate(
+    raw: SignalCandidate,
+    bars: list[Bar],
+    pivots: PivotLevels | None,
+    min_rr: float,
+) -> SignalCandidate | None:
+    if len(bars) < 2:
+        return None
+
+    setup_bar = bars[-2]
+    confirm_bar = bars[-1]
+
+    if raw.side == "LONG":
+        if confirm_bar.close <= max(setup_bar.high, raw.entry):
+            return None
+        reasons = [*raw.reasons, "확인봉이 횡보 박스/후보봉 고가 위에서 마감"]
+    else:
+        if confirm_bar.close >= min(setup_bar.low, raw.entry):
+            return None
+        reasons = [*raw.reasons, "확인봉이 횡보 박스/후보봉 저가 아래에서 마감"]
+
+    entry = confirm_bar.close
+    target1, target2 = choose_targets(raw.side, entry, pivots, bars)
+    if raw.side == "LONG" and raw.setup_type in {"P라인 반등 롱", "P라인 바닥 횡보 롱"}:
+        target1 = max(target1, entry + 50.0)
+        if target2 is not None and target2 <= target1:
+            target2 = None
+    confirmed = build_candidate(
+        raw.side,
+        f"{raw.setup_type} 확인",
+        entry,
+        raw.stop,
+        target1,
+        target2,
+        confirm_bar.ts,
+        reasons,
+        raw.cautions,
+        min_rr,
+    )
+    if confirmed.rr < min_rr:
+        return None
+    return confirmed
+
+
+def analyze_signal(
+    bars: list[Bar],
+    pivots: PivotLevels | None,
+    context: list[MarketMove],
+    min_rr: float,
+) -> SignalCandidate | None:
+    if len(bars) < 81:
+        return None
+
+    direct = build_pivot_rebound_confirmed(bars, pivots, context, min_rr)
+    if direct:
+        return direct
+
+    # First find a setup on the previous completed candle, then require the
+    # latest candle to confirm direction. This removes many immediate failures.
+    raw = build_raw_candidate(bars[:-1], pivots, context, min_rr)
+    if raw is None:
+        return None
+    return confirm_candidate(raw, bars, pivots, min_rr)
+
+
 def build_watch_status(
     bars: list[Bar],
     pivots: PivotLevels | None,
@@ -810,8 +1418,101 @@ def format_context_line(move: MarketMove) -> str:
     return f"{move.label}: {arrow} {move.move_pct:+.2f}% ({move.close:.2f})"
 
 
+def side_kr(side: str) -> str:
+    return "롱" if side == "LONG" else "숏"
+
+
+def side_icon(side: str) -> str:
+    return "🟢" if side == "LONG" else "🔴"
+
+
+def compact_reasons(reasons: list[str], limit: int = 2) -> str:
+    if not reasons:
+        return "근거 부족"
+    return " / ".join(reasons[:limit])
+
+
+def compact_market_summary(context: list[MarketMove]) -> str:
+    if not context:
+        return "확인 불가"
+
+    long_bias, short_bias, notes = score_market_bias(context)
+    if long_bias > short_bias + 1:
+        direction = "롱 우호"
+    elif short_bias > long_bias + 1:
+        direction = "숏 우호"
+    else:
+        direction = "혼조"
+
+    if not notes:
+        return direction
+    return f"{direction} ({', '.join(notes[:2])})"
+
+
+def compact_action_for(level: int, side: str | None = None) -> str:
+    if level >= 5:
+        return "진입 금지"
+    if level == 4 and side:
+        return f"{side_kr(side)} 강한 후보. 조건 맞으면 검토"
+    if level == 3 and side:
+        return f"{side_kr(side)} 후보. 확인봉 전까지 대기"
+    if level == 2:
+        return "대기. 아직 진입 아님"
+    return "보기만. 아무것도 안 함"
+
+
 def section(title: str) -> list[str]:
     return ["", "━━━━━━━━━━━━", title, "━━━━━━━━━━━━"]
+
+
+def signal_horizon(signal: SignalCandidate) -> str:
+    if "라운딩" in signal.setup_type:
+        return "1~3시간 확인형"
+    if "바닥 횡보" in signal.setup_type:
+        return "3~4시간 관찰형"
+    return "1~4시간 확인"
+
+
+def signal_action(signal: SignalCandidate) -> str:
+    side = side_kr(signal.side)
+    if "라운딩" in signal.setup_type:
+        return f"차트 열고 {side} 라운딩 반전 확인"
+    if "P라인 바닥 횡보" in signal.setup_type:
+        return f"차트 열고 {side} 진입 가능 후보"
+    if "바닥 횡보" in signal.setup_type:
+        return f"차트 열고 {side} 진입 가능 후보"
+    return f"{side} 후보지만 신뢰 낮음. 패스 우선"
+
+
+def trade_status_title(signal: SignalCandidate) -> str:
+    side = side_kr(signal.side).upper()
+    if signal.level >= 4:
+        return f"{side_icon(signal.side)} {side} 진입 가능 후보"
+    return f"{side_icon(signal.side)} {side} 관찰 후보"
+
+
+def trade_next_step(signal: SignalCandidate) -> str:
+    side = side_kr(signal.side)
+    if signal.level >= 4:
+        return f"지금 할 일: 손절 가능하면 소액 {side}"
+    return f"지금 할 일: 차트 확인. 바로 추격 X"
+
+
+def trade_entry_condition(signal: SignalCandidate) -> str:
+    if "라운딩 바닥" in signal.setup_type:
+        return "조건: 짧아진 봉 위로 롱 확인봉"
+    if "라운딩 천장" in signal.setup_type:
+        return "조건: 짧아진 봉 아래로 숏 확인봉"
+    if "P라인 바닥 횡보" in signal.setup_type:
+        return "조건: P라인 위/근처에서 박스 유지"
+    if "바닥 횡보" in signal.setup_type:
+        return "조건: 바닥 박스 저점 유지"
+    return "조건: 확인봉 방향 유지"
+
+
+def format_stop_line(signal: SignalCandidate) -> str:
+    direction = "아래" if signal.side == "LONG" else "위"
+    return f"{signal.stop:.2f} {direction} 5분봉 마감"
 
 
 def format_signal_message(
@@ -820,92 +1521,45 @@ def format_signal_message(
     context: list[MarketMove],
     headlines: list[str],
 ) -> str:
-    target2_text = f"{signal.target2:.2f}" if signal.target2 is not None else "없음"
+    caution_text = "없음" if not signal.cautions else " / ".join(signal.cautions[:2])
+    first_target = signal.entry + 50.0 if signal.side == "LONG" else signal.entry - 50.0
+    next_level_text = ""
+    if abs(signal.target1 - first_target) > 1.0:
+        next_level_text = f"다음 레벨: {signal.target1:.2f}"
     lines = [
-        f"[LEVEL {signal.level} / {signal.level_name}]",
-        f"{symbol} · {signal.side} 후보 · {signal.entry:.2f}",
+        trade_status_title(signal),
+        f"{symbol} {signal.entry:.2f}",
         "",
-        "방향:",
-        signal.side,
+        trade_next_step(signal),
+        trade_entry_condition(signal),
+        "",
+        f"진입: {signal.entry:.2f}",
+        f"무효: {format_stop_line(signal)}",
+        f"1차 목표: {first_target:.2f} (+50pt)",
+        *([next_level_text] if next_level_text else []),
+        "",
+        f"유형: {signal.setup_type.replace(' 확인', '')}",
+        f"시간: {signal_horizon(signal)}",
+        f"근거: {compact_reasons(signal.reasons, 2)}",
+        f"주의: {caution_text}",
+        "",
+        f"{kst_time_string(signal.bar_time)}",
     ]
-    lines.extend(section("판단"))
-    lines.extend(
-        [
-            signal.decision,
-            "",
-            "지금 할 일:",
-            next_action_for(signal.level),
-        ]
-    )
-    lines.extend(section("가격"))
-    lines.extend(
-        [
-            f"진입 후보: {signal.entry:.2f}",
-            f"손절: {signal.stop:.2f}",
-            f"익절: {signal.target1:.2f} / {target2_text}",
-            f"손익비: {signal.rr:.2f}R",
-            f"무효: {signal.invalidation}",
-        ]
-    )
-    lines.extend(section("근거"))
-    lines.extend(f"- {reason}" for reason in signal.reasons)
-    lines.extend(
-        [
-            "",
-            f"셋업: {signal.setup_type}",
-            f"시간: {kst_time_string(signal.bar_time)}",
-        ]
-    )
-    if signal.cautions:
-        lines.extend(section("주의"))
-        lines.extend(f"- {caution}" for caution in signal.cautions)
-    if context:
-        lines.extend(section("시장 체크"))
-        lines.extend(format_context_line(move) for move in context[:6])
-    if headlines:
-        lines.extend(section("뉴스 체크"))
-        lines.extend(f"- {headline[:110]}" for headline in headlines[:4])
-    else:
-        lines.extend(section("뉴스 체크"))
-        lines.append("뉴스 체크: 주요 키워드 헤드라인 없음")
     return "\n".join(lines)
 
 
 def format_watch_message(symbol: str, status: WatchStatus, context: list[MarketMove]) -> str:
     lines = [
-        f"[LEVEL {status.level} / {status.level_name}]",
-        f"{symbol} · 방향 없음 · {status.current_price:.2f}",
+        "❌ 지금 진입 금지",
+        f"{symbol} {status.current_price:.2f}",
+        "",
+        "지금 할 일: 아무것도 누르지 않기",
+        "",
+        f"이유: {compact_reasons(status.reasons, 2)}",
+        f"주의: {'없음' if not status.cautions else ' / '.join(status.cautions[:2])}",
+        "",
+        f"{kst_time_string(status.bar_time)}",
     ]
-    lines.extend(section("판단"))
-    lines.extend(
-        [
-            status.decision,
-            "",
-            "지금 할 일:",
-            next_action_for(status.level),
-        ]
-    )
-    lines.extend(section("현재 체크"))
-    lines.extend(f"- {reason}" for reason in status.reasons)
-    lines.extend(
-        [
-            "",
-            f"시간: {kst_time_string(status.bar_time)}",
-        ]
-    )
-    if status.cautions:
-        lines.extend(section("주의"))
-        lines.extend(f"- {caution}" for caution in status.cautions)
-    if context:
-        lines.extend(section("시장 체크"))
-        lines.extend(format_context_line(move) for move in context[:6])
-    lines.extend(section("알림 기준"))
-    lines.extend(
-        [
-            "LEVEL 3 이상일 때만 진입 후보 알림",
-            "1 보기만 / 2 대기 / 3 진입 후보 / 4 강한 후보 / 5 금지",
-        ]
-    )
     return "\n".join(lines)
 
 

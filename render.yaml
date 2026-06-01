@@ -1,12 +1,6 @@
 services:
-  - type: cron
-    name: us100-market-signal-bot
+  - type: worker
+    name: us100-dual-paper-worker
     runtime: python
-    schedule: "*/5 * * * *"
     buildCommand: "python --version"
-    startCommand: "python market_reason_mvp/market_signal_bot.py --once --symbol=NQ=F --min-level=3 --min-rr=1.30"
-    envVars:
-      - key: TELEGRAM_BOT_TOKEN
-        sync: false
-      - key: TELEGRAM_CHAT_ID
-        sync: false
+    startCommand: "python market_reason_mvp/render_dual_paper_worker.py --symbol=NQ=F --poll=300 --reset"

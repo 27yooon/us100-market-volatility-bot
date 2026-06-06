@@ -634,6 +634,66 @@ def detect_pivot_rebound_long(
     return entry_trigger, stop, reasons, cautions
 
 
+def detect_pivot_rejection_short(
+    bars: list[Bar],
+    pivots: PivotLevels | None,
+    fast_ema: float,
+    slow_ema: float,
+    atr_value: float,
+    buffer: float,
+    touch_distance: float,
+) -> tuple[float, float, list[str], list[str]] | None:
+    """Find a faster P-line rejection after a rebound fails."""
+    if pivots is None or len(bars) < 25 or atr_value <= 0:
+        return None
+
+    pp = pivots.pp
+    recent = bars[-8:]
+    touch_indexes = [
+        index
+        for index, bar in enumerate(recent)
+        if bar.low <= pp + touch_distance and bar.high >= pp - touch_distance
+    ]
+    if not touch_indexes:
+        return None
+
+    last_touch = touch_indexes[-1]
+    after_touch = recent[last_touch:]
+    last = recent[-1]
+
+    if any(bar.close > pp + buffer for bar in after_touch):
+        return None
+    if max(bar.high for bar in after_touch) < pp - touch_distance:
+        return None
+    if last.close >= pp - buffer:
+        return None
+    if last.close > fast_ema + atr_value * 0.15:
+        return None
+    if pp - last.close > atr_value * 2.4:
+        return None
+
+    recent_low = min(bar.low for bar in recent[-3:])
+    entry_trigger = recent_low
+    stop = max(max(bar.high for bar in after_touch), pp) + buffer
+    if stop <= entry_trigger:
+        return None
+
+    reasons = [
+        f"일봉 P라인 근접 후 저항({pp:.2f})",
+        "P라인 위 5분봉 확정 돌파 실패",
+        "직전 반등 후 다시 하락 시도",
+    ]
+    cautions: list[str] = []
+    if fast_ema <= slow_ema:
+        reasons.append("EMA 20/50 기준 하락 우위")
+    else:
+        cautions.append("EMA 20/50은 아직 상승 우위")
+    if volume_drying(bars):
+        reasons.append("거래량 감소 후 반락")
+
+    return entry_trigger, stop, reasons, cautions
+
+
 def detect_rounding_reversal(
     bars: list[Bar],
     atr_value: float,
@@ -992,6 +1052,94 @@ def build_pivot_rebound_confirmed(
     return candidate
 
 
+def build_pivot_rejection_confirmed(
+    bars: list[Bar],
+    pivots: PivotLevels | None,
+    context: list[MarketMove],
+    min_rr: float,
+) -> SignalCandidate | None:
+    if pivots is None or len(bars) < 80:
+        return None
+
+    closes = [bar.close for bar in bars]
+    fast = ema(closes, 20)
+    slow = ema(closes, 50)
+    atr_value = atr(bars, 14)[-1]
+    if atr_value <= 0:
+        return None
+
+    pp = pivots.pp
+    buffer = atr_value * 0.20
+    touch_distance = atr_value * 0.45
+    recent = bars[-8:]
+    last = recent[-1]
+    touch_indexes = [
+        index
+        for index, bar in enumerate(recent[:-1])
+        if bar.low <= pp + touch_distance and bar.high >= pp - touch_distance
+    ]
+    if not touch_indexes:
+        return None
+
+    last_touch = touch_indexes[-1]
+    after_touch = recent[last_touch:]
+    touch_high = max(bar.high for bar in after_touch)
+    if any(bar.close > pp + buffer for bar in after_touch):
+        return None
+    if touch_high < pp - touch_distance:
+        return None
+    if last.close >= pp - buffer:
+        return None
+    if last.close >= pp - touch_distance:
+        return None
+    if last.close > fast[-1] + atr_value * 0.15:
+        return None
+    if pp - last.close > atr_value * 2.2:
+        return None
+
+    entry = last.close
+    stop = touch_high + buffer
+    target1 = entry - 50.0
+    target2, _ = choose_targets("SHORT", entry, pivots, bars)
+    if target2 >= target1:
+        target2 = None
+
+    reasons = [
+        f"일봉 P라인 근접 후 저항({pp:.2f})",
+        "P라인 위 5분봉 확정 돌파 실패",
+        "반락봉이 직전 봉보다 낮게 마감",
+    ]
+    cautions: list[str] = []
+    if fast[-1] <= slow[-1]:
+        reasons.append("EMA 20/50 기준 하락 우위")
+    else:
+        cautions.append("EMA 20/50은 아직 상승 우위")
+    if volume_drying(bars):
+        reasons.append("거래량 감소 후 반락")
+
+    long_bias, short_bias, _ = score_market_bias(context)
+    if short_bias > long_bias:
+        reasons.append("시장 보조지표가 숏에 우호적")
+    elif long_bias > short_bias + 1:
+        cautions.append("시장 보조지표가 숏에 불리")
+
+    candidate = build_candidate(
+        "SHORT",
+        "P라인 저항 숏 확인",
+        entry,
+        stop,
+        target1,
+        target2,
+        last.ts,
+        reasons,
+        cautions,
+        min_rr,
+    )
+    if candidate.rr < min_rr:
+        return None
+    return candidate
+
+
 def build_raw_candidate(
     bars: list[Bar],
     pivots: PivotLevels | None,
@@ -1051,6 +1199,33 @@ def build_raw_candidate(
         candidate = build_candidate(
             "LONG",
             "P라인 반등 롱",
+            entry_trigger,
+            stop,
+            target1,
+            target2,
+            last.ts,
+            reasons,
+            cautions,
+            min_rr,
+        )
+        if candidate.rr >= min_rr:
+            candidates.append(candidate)
+
+    pivot_rejection = detect_pivot_rejection_short(bars, pivots, fast[-1], slow[-1], atr_value, buffer, touch_distance)
+    if pivot_rejection:
+        entry_trigger, stop, reasons, cautions = pivot_rejection
+        if short_bias > long_bias:
+            reasons.append("시장 보조지표가 숏에 우호적")
+        elif long_bias > short_bias + 1:
+            cautions.append("시장 보조지표가 숏에 불리")
+
+        target1 = entry_trigger - 50.0
+        target2, _ = choose_targets("SHORT", entry_trigger, pivots, bars)
+        if target2 >= target1:
+            target2 = None
+        candidate = build_candidate(
+            "SHORT",
+            "P라인 저항 숏",
             entry_trigger,
             stop,
             target1,
@@ -1285,6 +1460,10 @@ def confirm_candidate(
         target1 = max(target1, entry + 50.0)
         if target2 is not None and target2 <= target1:
             target2 = None
+    elif raw.side == "SHORT" and raw.setup_type in {"P라인 저항 숏"}:
+        target1 = min(target1, entry - 50.0)
+        if target2 is not None and target2 >= target1:
+            target2 = None
     confirmed = build_candidate(
         raw.side,
         f"{raw.setup_type} 확인",
@@ -1312,6 +1491,9 @@ def analyze_signal(
         return None
 
     direct = build_pivot_rebound_confirmed(bars, pivots, context, min_rr)
+    if direct:
+        return direct
+    direct = build_pivot_rejection_confirmed(bars, pivots, context, min_rr)
     if direct:
         return direct
 

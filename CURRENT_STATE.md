@@ -861,18 +861,36 @@
 - 앞으로 대화에서 부를 이름:
   - `쭈꾸미 원본`: 우리가 직접 정한 P라인, 라운딩, 피봇, EMA 중심 실제 모의매매 기준.
   - `기본지표`: Bollinger, EMA, RSI, ATR 기반 기본 공개지표 비교군. 실제 모의매매 가능.
-  - `오픈박스 관찰`: NY 오픈 22:30~23:00 KST 박스/ORB 후보만 관찰. 실제 진입 안 함.
+  - `오픈박스 매매`: NY 오픈 22:30~23:00 KST 박스/ORB 기준을 통과하면 실제 모의매매로 진입.
   - `점수제 관찰`: EMA, Bollinger, RSI, MACD, Stochastic, ATR을 점수화해 후보만 관찰. 실제 진입 안 함.
 - 코드 내부 이름:
   - `쭈꾸미 원본` = `zukkumi_original`
   - `기본지표` = `indicator_basic`
-  - `오픈박스 관찰` = `orb_watch`
+  - `오픈박스 매매` = `orb_paper`
   - `점수제 관찰` = `score_watch`
 - 전략 버전:
   - `zukkumi_original`: `zukkumi_original_v4`
   - `indicator_basic`: `indicator_basic_v1`
-  - `orb_watch`: `orb_watch_v1`
+  - `orb_paper`: `orb_paper_v1`
   - `score_watch`: `score_watch_v1`
 - 호환 처리:
   - Render 상태 파일에 예전 이름이 남아 있어도 새 이름으로 자동 이전하도록 `render_dual_paper_worker.py`에 마이그레이션을 넣었다.
   - Notion 요약 로거도 새 이름과 예전 이름을 모두 읽을 수 있게 수정했다.
+
+## 오픈박스 매매 승격
+
+- 작업 시각: 2026-06-07 KST
+- 이유: 사용자가 오늘 상의한 ORB/NY 오픈박스 전략도 관찰만 하지 말고 기존 두 모의매매와 별도인 세 번째 모의매매로 넣자고 결정.
+- 변경:
+  - 기존 `오픈박스 관찰` / `orb_watch`를 `오픈박스 매매` / `orb_paper`로 승격.
+  - 예전 상태명 `orb_watch`나 `ny_orb_observation_rules`가 Render state에 남아 있으면 `orb_paper`로 자동 이전.
+- 실제 진입 기준:
+  - 22:30~23:00 KST NY 오픈 박스가 형성된 뒤에만 본다.
+  - 상단 돌파 롱, 하단 이탈 숏, 상단 돌파 실패 숏, 하단 이탈 실패 롱, 중간값 재테스트 중 하나가 발생해야 한다.
+  - `score_total >= 70`
+  - `level >= 2`
+  - `rr >= min_rr` 기본값 1.30
+- 기록:
+  - 기준 미달 ORB는 계속 후보로 기록한다.
+  - 기준 통과 ORB는 `OPEN` 이벤트로 실제 모의매매 진입한다.
+  - 실거래 아님. Render 모의매매 검증용.

@@ -11,7 +11,7 @@ import argparse
 import json
 import math
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -27,15 +27,16 @@ JSONL_PATH = LOG_DIR / "render_dual_paper_events.jsonl"
 STRATEGY_VERSIONS = {
     "zukkumi_original": "zukkumi_original_v4",
     "indicator_basic": "indicator_basic_v1",
-    "orb_watch": "orb_watch_v1",
+    "orb_paper": "orb_paper_v1",
     "score_watch": "score_watch_v1",
 }
 
 LEGACY_STRATEGY_NAMES = {
     "zukkumi_rules": "zukkumi_original",
     "public_indicator_rules": "indicator_basic",
-    "ny_orb_observation_rules": "orb_watch",
+    "ny_orb_observation_rules": "orb_paper",
     "score_indicator_rules": "score_watch",
+    "orb_watch": "orb_paper",
 }
 
 
@@ -172,7 +173,7 @@ def load_state(reset: bool) -> dict[str, Any]:
         "strategies": {
             "zukkumi_original": initial_strategy_state("zukkumi_original"),
             "indicator_basic": initial_strategy_state("indicator_basic"),
-            "orb_watch": initial_strategy_state("orb_watch"),
+            "orb_paper": initial_strategy_state("orb_paper"),
             "score_watch": initial_strategy_state("score_watch"),
         },
     }
@@ -865,6 +866,42 @@ def ny_orb_observation_candidates(bars: list[bot.Bar]) -> list[PaperSignal]:
     return out[:3]
 
 
+def orb_paper_signal(bars: list[bot.Bar], min_rr: float) -> tuple[PaperSignal | None, list[PaperSignal]]:
+    candidates = ny_orb_observation_candidates(bars)
+    if not candidates:
+        return None, []
+
+    qualified = [
+        signal for signal in candidates
+        if (signal.score_total or 0) >= 70 and signal.level >= 2 and (signal.rr or 0) >= min_rr
+    ]
+    if not qualified:
+        return None, candidates
+
+    best = max(qualified, key=lambda signal: ((signal.score_total or 0), signal.rr or 0))
+    setup_type = (
+        best.setup_type
+        .replace(" 관찰", "")
+        .replace("ORB", "오픈박스")
+    )
+    reasons = [
+        "오픈박스 매매 기준 통과",
+        *best.reasons,
+    ]
+    cautions = [
+        *best.cautions,
+        "신규 검증용 세 번째 모의매매. 실거래 아님",
+    ]
+    return replace(
+        best,
+        setup_type=setup_type,
+        reasons=reasons,
+        cautions=cautions,
+        observation_type=None,
+        strategy_version=strategy_version("orb_paper"),
+    ), candidates
+
+
 def update_open_trade(strategy: str, state: dict[str, Any], bars: list[bot.Bar]) -> None:
     trade = state.get("open_trade")
     if not trade:
@@ -1091,10 +1128,9 @@ def run_tick(state: dict[str, Any], symbol: str, interval: str, range_name: str,
             signal = public_indicator_signal(bars, min_level=3)
             observations = [signal] if signal is not None else []
             trade_min_level = 3
-        elif name == "orb_watch":
-            signal = None
-            observations = ny_orb_observation_candidates(bars)
-            trade_min_level = 99
+        elif name == "orb_paper":
+            signal, observations = orb_paper_signal(bars, min_rr=min_rr)
+            trade_min_level = 2
         elif name == "score_watch":
             signal = None
             observations = score_indicator_observation_candidates(bars)

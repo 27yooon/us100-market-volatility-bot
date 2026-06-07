@@ -74,6 +74,238 @@
   - Render 반영 여부
   - 다음 작업
 
+## 노션 자동기록
+
+- 2026-06-01 KST 결정 및 정정:
+  - 자동기록은 필요하다.
+  - Render에서 도는 두 가지 모의매매 결과를 사람이 보기 쉬운 거래 일지 형태로 노션에 남긴다.
+  - 우선 텔레그램은 쓰지 않고, 노션은 상태/거래/근거 기록용으로 사용한다.
+  - 절대로 Codex/ChatGPT에 연결된 Notion MCP 또는 노션 커넥터에 기록하지 않는다.
+  - 노션 기록은 사용자가 연결해둔 쭈꾸미 프로젝트용 Notion API로만 한다.
+- 잘못 생성한 Codex 연결 노션 DB:
+  - 이름: `쭈꾸미 모의매매 기록`
+  - 조치: 2026-06-01 KST 즉시 휴지통 처리.
+  - 앞으로 사용 금지.
+- 사용자 Notion API:
+  - 현재 프로젝트 파일에서 Notion API 코드/환경변수 흔적은 아직 확인되지 않았다.
+  - 사용자가 확인용으로 준 Notion/API 기준 후보 주소:
+    - `https://app.notion.com/p/code_hub-33af6018754380bcb4c2ed88103d6cae?source=copy_link`
+  - 위 주소가 실제 데이터베이스인지, API 연결 안내 페이지인지, 또는 DB를 포함한 허브 페이지인지는 아직 확인 전이다.
+  - 필요한 Render 환경변수 예시 이름: `NOTION_API_TOKEN`, `NOTION_DATABASE_ID`
+  - 토큰값은 파일, GitHub, 채팅에 노출하지 않는다.
+  - Render 환경변수로만 넣는다.
+- 기록 컬럼:
+  - `Time`: 기록 시간
+  - `Strategy`: `zukkumi_rules` 또는 `public_indicator_rules`
+  - `Event`: `START`, `HEARTBEAT`, `OPEN`, `CLOSE`, `ERROR`
+  - `Symbol`, `Price`, `Side`, `Setup`, `Entry`, `Stop`, `Target`
+  - `Result`, `PnL`, `Trades`, `Wins`, `Losses`, `Open Position`
+  - `Reasons`, `Notes`, `Render URL`
+- 첫 샘플 기록:
+  - `2026-06-01 22:44 KST HEARTBEAT zukkumi_rules`
+  - `2026-06-01 22:44 KST HEARTBEAT public_indicator_rules`
+  - 당시 가격: `NQ=F 30410.25`
+  - 두 전략 모두 매매 0회, 열린 포지션 없음.
+  - 주의: 이 샘플은 잘못된 Codex 연결 노션에 만들어졌다가 DB와 함께 휴지통 처리했다.
+- 운영 방식:
+  - 1단계: 프로젝트 Notion API 연결 정보를 확인한다.
+  - 2단계: Render Worker가 Notion API 토큰과 DB ID를 env로 받아 `OPEN/CLOSE/HEARTBEAT`를 직접 기록하게 만든다.
+  - 3단계: Codex는 Render 로그와 노션 기록이 일치하는지만 확인한다.
+- 2026-06-01 샘플 파일:
+  - `NOTION_TRADE_LOG_SAMPLE.md`: 노션 DB 구조와 샘플 행 설명.
+  - `notion_trade_log_sample.csv`: 노션으로 가져갈 수 있는 CSV 샘플.
+  - 이 파일들은 사용자가 직접 원하는 Notion 위치로 옮기기 위한 임시본이다.
+- 2026-06-02 템플릿 보강:
+  - 기존 노션 샘플이 너무 성의 없다는 사용자 피드백을 받았다.
+  - `NOTION_TRADE_LOG_SAMPLE.md`를 `쭈꾸미 모의매매 운영 대시보드 템플릿 v2`로 전면 교체했다.
+  - `notion_trade_log_sample.csv`도 실제 거래/상태 기록용 컬럼으로 다시 만들었다.
+  - 사용자 지정 Notion `code_hub` 페이지에 Chrome으로 직접 v2 템플릿을 붙여 넣었다.
+  - Notion 위치: `https://app.notion.com/p/code_hub-33af6018754380bcb4c2ed88103d6cae`
+  - Codex/ChatGPT Notion 커넥터는 사용하지 않았다.
+- 2026-06-02 날짜별 보기 보강:
+  - 사용자 피드백: "날짜별로 볼 수 있어야 되는 것 아니냐".
+  - `NOTION_TRADE_LOG_SAMPLE.md`에 `날짜별 일지` 섹션을 추가했다.
+  - `2026-06-02 화요일`, `2026-06-03 수요일` 구조로 일간 요약, 전략별 요약, 거래 상세, 복기를 보게 했다.
+  - `notion_trade_log_sample.csv`에 `Date` 컬럼을 추가했다.
+  - Notion `code_hub`에도 `쭈꾸미 날짜별 모의매매 보기 보강` 섹션을 Chrome으로 직접 추가했다.
+  - 추천 Notion 보기: Daily Journal, Calendar, By Strategy, Open Positions, Wins/Losses, Review Needed.
+- 2026-06-05 거래 목록형 v3 보강:
+  - 사용자 피드백: "방금 정리한 것처럼 노션에도 정리하면 좋겠다".
+  - `NOTION_TRADE_LOG_SAMPLE.md`를 전략별 거래 목록, 날짜별 보기, 복기 포인트 중심으로 수정했다.
+  - `notion_trade_log_sample.csv`도 실제 Render 5개 거래 기준으로 다시 만들었다.
+  - Notion `code_hub`에 `쭈꾸미 모의매매 거래 목록 v3` 섹션을 Chrome으로 직접 추가했다.
+  - 포함 내용:
+    - 전체 요약: `zukkumi_rules` 4회 2승 2패 +36.25pt, `public_indicator_rules` 1회 1승 +50pt
+    - 전략별 거래 목록
+    - 2026-06-02 / 2026-06-04 날짜별 거래 요약
+    - 다음 확인: 2026-06-02 손실 2건 공통점, P라인 반등 롱 필터, 숏/라운딩 미체결 원인
+  - Codex/ChatGPT Notion 커넥터는 사용하지 않았다.
+- 2026-06-05 한눈에 보는 표 보강:
+  - 사용자 스크린샷 기준으로 `# / 진입 시각 / 방향 / 셋업 / 진입가 / 청산 시각 / 결과 / 손익` 컬럼만 남긴 보기 좋은 표를 추가했다.
+  - Notion `code_hub`에 `쭈꾸미 모의매매 한눈에 보는 표` 섹션을 Chrome으로 직접 추가했다.
+  - `zukkumi_rules`와 `public_indicator_rules`를 분리해 표와 합계를 표시했다.
+  - `NOTION_TRADE_LOG_SAMPLE.md`에도 같은 섹션을 추가했다.
+- 2026-06-05 장기 Notion DB/API 구조 전환 준비:
+  - 사용자 지적: 문서 표만으로는 필터링/누적/장기 운영이 안 된다.
+  - 결론: 장기 운영은 Notion Database + Render Worker API append 방식이어야 한다.
+  - 새 파일: `NOTION_DATABASE_SETUP.md`
+  - 새 코드: `market_reason_mvp/notion_trade_logger.py`
+  - 수정 코드: `market_reason_mvp/render_dual_paper_worker.py`
+  - 동작:
+    - Render 환경변수 `NOTION_API_TOKEN`, `NOTION_DATABASE_ID`가 있으면 START/HEARTBEAT/OPEN/CLOSE/ERROR를 Notion DB에 자동 추가한다.
+    - 환경변수가 없으면 기존처럼 Render 로그만 남긴다.
+  - 아직 하지 않은 것:
+    - 사용자 Notion에 실제 Database 생성
+    - Render 환경변수 2개 설정
+    - GitHub push 및 Render redeploy
+  - 주의: Notion 토큰은 절대 파일/GitHub/채팅에 적지 않는다.
+- 2026-06-05 Notion 사용 구조 재정리:
+  - 사용자 피드백: "아직도 한 뭉텅이고, 어떻게 사용할지 모르겠다."
+  - 결론: 한 페이지에 표를 계속 붙이는 방식은 폐기하고, 3개 DB로 나눠야 한다.
+  - 새 파일:
+    - `notion_trades_db.csv`: 모든 거래 원본 DB
+    - `notion_daily_summary_db.csv`: 날짜별 일간 요약 DB
+    - `notion_review_queue_db.csv`: 손실/문제 복기 DB
+    - `NOTION_USE_GUIDE.md`: 매일 보는 순서와 DB 사용법
+  - Notion `code_hub`에 `쭈꾸미 Notion은 이렇게 써야 함` 섹션을 Chrome으로 직접 추가했다.
+  - 앞으로 사용 구조:
+    1. 일간 요약 DB 먼저 확인
+    2. 손실일이면 복기 DB 확인
+    3. 세부 거래는 거래 DB에서 날짜/전략으로 필터
+    4. Render 로그는 문제 확인용
+    5. 자동기록 연결 후에는 손으로 표를 붙이지 않음
+- 2026-06-05 사용자 신규 Notion DB 반영:
+  - 사용자가 새 Notion DB를 만들었다.
+  - URL: `https://app.notion.com/p/376f601875438194affcfc8613fc71a3?v=376f6018754381a0bd33000ce1db594d`
+  - 제목: `매매일지`
+  - Chrome으로 직접 열어 실제 Notion DB임을 확인했다.
+  - Codex/ChatGPT Notion 커넥터는 사용하지 않았다.
+  - 기존 샘플 행은 삭제하지 않았다.
+  - 아래 실제 Render 거래 5건을 DB 행으로 추가했다:
+    1. `2026-06-01 23:54 zukkumi LONG WIN`
+    2. `2026-06-02 16:06 zukkumi LONG LOSS`
+    3. `2026-06-02 20:47 zukkumi LONG LOSS`
+    4. `2026-06-04 02:46 zukkumi LONG WIN`
+    5. `2026-06-04 14:17 public LONG WIN`
+  - 확인한 컬럼:
+    - 매매명
+    - 1차 익절가
+    - R배수
+    - 결과
+    - 계약수
+    - 날짜
+    - 복기
+    - 손익(pt)
+    - 전략
+    - 종목
+    - 진입가
+    - 차트 링크
+    - 청산가
+    - 포지션
+  - 2026-06-06 Notion 표 보강:
+    - 사용자 피드백: 두 매매법이 한 표에 섞여 있어 바로 구분하기 어렵다.
+    - Chrome으로 직접 `매매명` 오른쪽, `1차 익절가` 왼쪽에 `매매법 구분` 컬럼을 새로 만들었다.
+    - 값 기준:
+      - `쭈꾸미 룰`: 우리 피드백 기반 매매법. P라인 반등, P라인 바닥 횡보, 라운딩, EMA 흐름, 일봉 피봇을 보는 전략.
+      - `공개지표 룰`: 외부 공개 사례를 참고해 단순화한 기술지표형 전략. EMA20/50, RSI14, Bollinger, ATR 기반.
+    - 현재 입력값:
+      - 샘플 행: `쭈꾸미 룰`
+      - `2026-06-01 23:54 zukkumi LONG WIN`: `쭈꾸미 룰`
+      - `2026-06-02 16:06 zukkumi LONG LOSS`: `쭈꾸미 룰`
+      - `2026-06-02 20:47 zukkumi LONG LOSS`: `쭈꾸미 룰`
+      - `2026-06-04 02:46 zukkumi LONG WIN`: `쭈꾸미 룰`
+      - `2026-06-04 14:17 public LONG WIN`: `공개지표 룰`
+    - 기존 `전략` 컬럼은 유지한다. `매매법 구분`은 표 앞쪽에서 보기 좋게 구분하기 위한 사람용 컬럼이다.
+  - 2026-06-06 Notion 표 추가 정리:
+    - 사용자 요청: `매매명`은 복잡한 전략명까지 넣지 말고 `날짜 시간 포지션`만 보이게 단순화한다.
+    - 실제 거래 5건의 `매매명`을 다음 형식으로 수정했다:
+      - `2026-06-04 14:17 LONG`
+      - `2026-06-04 02:46 LONG`
+      - `2026-06-01 23:54 LONG`
+      - `2026-06-02 20:47 LONG`
+      - `2026-06-02 16:06 LONG`
+    - 표 정렬은 `날짜` 기준 `내림차순`으로 설정했다. 최신 날짜가 위에 온다.
+    - `연도`, `월` 컬럼을 `매매법 구분` 오른쪽에 추가했다.
+    - 현재 모든 샘플/거래 행에 `연도=2026`, `월=2026-06` 값을 채웠다.
+    - 사용 방식:
+      - 최신순 확인: 기본 표 그대로 본다.
+      - 연도별 확인: `연도` 컬럼에서 필터/그룹화한다.
+      - 월별 확인: `월` 컬럼에서 필터/그룹화한다.
+      - 전략별 확인: `매매법 구분` 컬럼에서 필터/그룹화한다.
+  - 2026-06-06 Notion 화면 정리:
+    - 사용자 확인: `연도`, `월`은 화면용이 아니라 필터/그룹화용 보조 컬럼이다.
+    - Chrome으로 직접 `연도`, `월` 컬럼을 기본 표에서 숨겼다.
+    - 숨긴 컬럼은 삭제한 것이 아니며, Notion 필터/그룹에서는 계속 사용할 수 있다.
+    - 기본 표 앞쪽 노출 순서: `매매명` -> `매매법 구분` -> `결과` -> `1차 익절가` -> `2차 익절가`.
+
+## Render 24시간 감시 체크
+
+- 2026-06-06 Render 비용 확인:
+  - 확인 위치: Render Dashboard > Billing > Unbilled Charges
+  - 현재 플랜: Hobby
+  - 이번 달 현재까지 미청구 비용: `Services $1.08`
+  - 비용 발생 서비스: `us100-dual-paper-worker`
+  - Cron Jobs 비용: 화면상 `0.00`
+  - 참고: 이는 Render 대시보드에 표시된 month-to-date 미청구 금액이며, 최종 청구 시점에는 실행 시간이 늘면 증가할 수 있다.
+	- 2026-06-02 09:05 KST heartbeat 확인:
+	  - Render 서비스: `us100-dual-paper-worker`
+  - URL: `https://dashboard.render.com/worker/srv-d8eomv6k1jcs73a6vro0/logs`
+  - 상태: 실행 중, 최신 HEARTBEAT 확인.
+  - 최신 로그: `2026-06-02 09:05:36 KST HEARTBEAT`
+  - 가격: `NQ=F 30458.75`
+  - `zukkumi_rules`: trades 1, wins 1, losses 0, pnl_points +50.0, open false
+  - `public_indicator_rules`: trades 0, wins 0, losses 0, pnl_points 0, open false
+  - 로컬 맥 보조 감시: screen 없음, `paper_signal_runner/caffeinate` 프로세스 없음.
+	  - 현재 기준 운영은 Render이며, 로컬 맥 감시는 꺼져 있는 것이 정상.
+	  - Notion 기록: 사용자 Notion API 연결 전까지 자동기록 보류. Codex/ChatGPT 노션 커넥터 사용 금지.
+	- 2026-06-06 왜 LONG만 들어갔는지 코드 기준 분석:
+	  - Render 모의매매 엔진 자체는 LONG/SHORT 둘 다 처리한다. SHORT이면 목표가는 `entry - 50`, 손절은 `5분봉 종가가 stop 위로 마감` 기준으로 처리된다.
+	  - `public_indicator_rules`에도 SHORT 조건은 있다. 조건은 Bollinger 상단 터치, EMA20 이탈, RSI14 > 52, EMA20 <= EMA50, 손익비 통과다.
+	  - 하지만 실제 5건은 모두 LONG이었다. 이유는 통과한 신호가 전부 `P라인 반등 롱 확인` 또는 `공개기술지표 반등 롱`이었기 때문이다.
+	  - 현재 쭈꾸미 규칙은 `P라인 근접 후 회복`, `P라인 아래 확정 이탈 실패`, `회복봉 고가 돌파` 같은 LONG 반등 구조를 강하게 잡는다.
+	  - 반대로 사용자가 차트에서 지적한 `P라인 회복 실패`, `횡보 하단 이탈`, `EMA 아래 재차 밀림` 같은 SHORT 구조는 아직 `P라인 저항/이탈 숏`으로 독립 구현되어 있지 않다.
+	  - 즉 문제는 숏이 불가능한 것이 아니라, 현재 P라인 규칙이 LONG 반등 쪽으로 치우쳐 있고 P라인 실패 숏을 같은 수준으로 후보화하지 못하는 것이다.
+	  - 다음 보완 후보: `P라인 저항/이탈 숏` 추가. 기준은 P라인 위 회복 실패, 낮아지는 고점, EMA20/50 아래 흐름, 박스 하단 또는 P라인 재이탈, 무효 기준은 P라인/직전 박스 고점 위 5분봉 마감.
+	- 2026-06-06 P라인 숏 대칭 로직 추가:
+	  - 사용자 지적: "하락 후 반등해서 라인을 깨지 못하면 롱 반등과 같은 구조로 숏 진입해야 하는 것 아니냐."
+	  - 반영 파일: `market_reason_mvp/market_signal_bot.py`
+	  - 새 함수: `detect_pivot_rejection_short`
+	  - 새 직접 확인 함수: `build_pivot_rejection_confirmed`
+	  - 새 셋업명:
+	    - 원시 후보: `P라인 저항 숏`
+	    - 확인 후보: `P라인 저항 숏 확인`
+	  - 기준:
+	    - 일봉 P라인 근처까지 반등
+	    - P라인 위 5분봉 확정 돌파 실패
+	    - 마지막 봉이 P라인 아래로 다시 밀림
+	    - EMA20 위로 과하게 회복하지 않음
+	    - 손절은 P라인/반등 고점 위, 목표는 `entry - 50pt`
+	  - `confirm_candidate`에도 SHORT P라인 후보는 확인 후 `entry - 50pt`를 1차 목표로 쓰도록 반영했다.
+	  - 검증: `python3 -m py_compile market_reason_mvp/market_signal_bot.py market_reason_mvp/render_dual_paper_worker.py` 통과.
+	- 2026-06-07 개선 패치:
+	  - 목적: 실제 진입 거래만 쌓는 구조에서 벗어나, `미진입 후보`도 자동으로 기록하고 후행 평가한다.
+	  - 반영 파일:
+	    - `market_reason_mvp/render_dual_paper_worker.py`
+	    - `market_reason_mvp/notion_trade_logger.py`
+	  - 새 이벤트:
+	    - `CANDIDATE_OPEN`: 기준은 보였지만 실제 진입하지 않은 후보.
+	    - `CANDIDATE_CLOSE`: 후보가 이후 +50pt를 먼저 갔는지, 무효 기준을 먼저 맞았는지 후행 평가.
+	  - 후보 후행 결과:
+	    - `MISSED_ENTRY`: 안 들어갔는데 +50pt 목표를 먼저 달성한 후보. 놓친 진입 후보.
+	    - `FILTERED_OK`: 무효 기준이 먼저 맞아 안 들어간 게 맞았던 후보.
+	    - `AMBIGUOUS`: 같은 5분봉 안에서 목표와 무효가 같이 보여 수동 복기 필요.
+	  - HEARTBEAT 요약에 추가된 값:
+	    - `candidate_open`
+	    - `missed_entries`
+	    - `filtered_ok`
+	  - Notion API logger에도 후보 상태/결과/필터 이유/복기 요약 필드를 추가했다.
+	  - 검증:
+	    - `python3 -m py_compile market_reason_mvp/render_dual_paper_worker.py market_reason_mvp/notion_trade_logger.py market_reason_mvp/market_signal_bot.py` 통과.
+	    - `python3 market_reason_mvp/render_dual_paper_worker.py --once --symbol=NQ=F --poll=300` 통과.
+	  - 주의:
+	    - Notion 자동기록은 여전히 Render 환경변수 `NOTION_API_TOKEN`, `NOTION_DATABASE_ID`가 설정된 경우에만 동작한다.
+	    - Codex/ChatGPT Notion 커넥터는 사용하지 않는다.
+
 ## 현재 봇 상태
 
 - Render Cron Job `us100-market-signal-bot`은 일시중지 상태다.

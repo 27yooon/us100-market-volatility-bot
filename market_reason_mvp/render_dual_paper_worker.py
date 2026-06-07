@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import market_signal_bot as bot
+import notion_trade_logger
 
 
 LOG_DIR = bot.PROJECT_DIR / "logs"
@@ -35,6 +36,8 @@ class PaperSignal:
     bar_time: int
     reasons: list[str]
     cautions: list[str]
+    rr: float | None = None
+    invalidation: str | None = None
 
 
 def now_text() -> str:
@@ -51,6 +54,8 @@ def append_event(record: dict[str, Any]) -> None:
     with JSONL_PATH.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
     print(json.dumps(record, ensure_ascii=False), flush=True)
+    if notion_trade_logger.enabled():
+        notion_trade_logger.send(record)
 
 
 def initial_strategy_state() -> dict[str, Any]:
@@ -132,6 +137,10 @@ def signal_key(strategy: str, symbol: str, signal: PaperSignal) -> str:
     return f"{strategy}:{symbol}:{signal.bar_time}:{signal.side}:{signal.setup_type}:{round(signal.entry, 1)}"
 
 
+def candidate_key(strategy: str, symbol: str, signal: PaperSignal) -> str:
+    return f"candidate:{signal_key(strategy, symbol, signal)}"
+
+
 def zukkumi_signal(
     symbol: str,
     bars: list[bot.Bar],
@@ -156,6 +165,36 @@ def zukkumi_signal(
         bar_time=candidate.bar_time,
         reasons=candidate.reasons,
         cautions=candidate.cautions,
+        rr=candidate.rr,
+        invalidation=candidate.invalidation,
+    )
+
+
+def zukkumi_observation_candidate(
+    symbol: str,
+    bars: list[bot.Bar],
+    pivots: bot.PivotLevels | None,
+    context: list[bot.MarketMove],
+    observe_min_rr: float,
+) -> PaperSignal | None:
+    candidate = bot.analyze_signal(bars, pivots, context, observe_min_rr)
+    if candidate is None:
+        return None
+    if "라운딩" not in candidate.setup_type and "P라인" not in candidate.setup_type:
+        return None
+    target = candidate.entry + 50 if candidate.side == "LONG" else candidate.entry - 50
+    return PaperSignal(
+        side=candidate.side,
+        setup_type=candidate.setup_type,
+        level=candidate.level,
+        entry=candidate.entry,
+        stop=candidate.stop,
+        target=target,
+        bar_time=candidate.bar_time,
+        reasons=candidate.reasons,
+        cautions=candidate.cautions,
+        rr=candidate.rr,
+        invalidation=candidate.invalidation,
     )
 
 
@@ -250,6 +289,115 @@ def update_open_trade(strategy: str, state: dict[str, Any], bars: list[bot.Bar])
                 return
 
 
+def candidate_filter_reason(signal: PaperSignal, trade_min_level: int, trade_min_rr: float) -> str:
+    reasons: list[str] = []
+    if signal.level < trade_min_level:
+        reasons.append(f"level {signal.level} < {trade_min_level}")
+    if signal.rr is not None and signal.rr < trade_min_rr:
+        reasons.append(f"rr {signal.rr:.2f} < {trade_min_rr:.2f}")
+    if not reasons:
+        reasons.append("strategy filter or duplicate/open trade")
+    return ", ".join(reasons)
+
+
+def open_candidate(
+    strategy: str,
+    state: dict[str, Any],
+    symbol: str,
+    signal: PaperSignal,
+    status: str,
+    filter_reason: str,
+) -> None:
+    key = candidate_key(strategy, symbol, signal)
+    if key in state.get("seen_candidate_keys", []):
+        return
+    candidate = {
+        "symbol": symbol,
+        **asdict(signal),
+        "candidate_status": status,
+        "filter_reason": filter_reason,
+        "observed_at": signal.bar_time,
+        "observed_at_text": text_time(signal.bar_time),
+        "signal_key": key,
+        "review_summary": "진입 보류 후보. 후행으로 +50pt 또는 무효 기준 선행 여부를 확인한다.",
+    }
+    state["watch_candidates"] = [*state.get("watch_candidates", []), candidate][-200:]
+    state["seen_candidate_keys"] = [*state.get("seen_candidate_keys", []), key][-500:]
+    append_event({"strategy": strategy, "event": "CANDIDATE_OPEN", **candidate})
+
+
+def update_watch_candidates(strategy: str, state: dict[str, Any], bars: list[bot.Bar]) -> None:
+    candidates = state.get("watch_candidates", [])
+    if not candidates:
+        return
+
+    updated: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if candidate.get("candidate_result"):
+            updated.append(candidate)
+            continue
+
+        future = [bar for bar in bars if bar.ts > candidate["observed_at"]]
+        resolved: dict[str, Any] | None = None
+        for bar in future:
+            if candidate["side"] == "LONG":
+                hit_target = bar.high >= candidate["target"]
+                hit_stop = bar.close < candidate["stop"]
+                if hit_target and hit_stop:
+                    result = "AMBIGUOUS"
+                    exit_price = bar.close
+                    reason = "target and invalidation appeared in same 5m bar"
+                elif hit_target:
+                    result = "MISSED_ENTRY"
+                    exit_price = candidate["target"]
+                    reason = "+50pt target would have hit"
+                elif hit_stop:
+                    result = "FILTERED_OK"
+                    exit_price = bar.close
+                    reason = "invalidation would have hit first"
+                else:
+                    continue
+            else:
+                hit_target = bar.low <= candidate["target"]
+                hit_stop = bar.close > candidate["stop"]
+                if hit_target and hit_stop:
+                    result = "AMBIGUOUS"
+                    exit_price = bar.close
+                    reason = "target and invalidation appeared in same 5m bar"
+                elif hit_target:
+                    result = "MISSED_ENTRY"
+                    exit_price = candidate["target"]
+                    reason = "+50pt target would have hit"
+                elif hit_stop:
+                    result = "FILTERED_OK"
+                    exit_price = bar.close
+                    reason = "invalidation would have hit first"
+                else:
+                    continue
+
+            pnl = exit_price - candidate["entry"] if candidate["side"] == "LONG" else candidate["entry"] - exit_price
+            resolved = {
+                **candidate,
+                "candidate_result": result,
+                "exit_price": exit_price,
+                "pnl_points": pnl,
+                "closed_at": bar.ts,
+                "closed_at_text": text_time(bar.ts),
+                "close_reason": reason,
+                "review_summary": (
+                    "놓친 진입 후보" if result == "MISSED_ENTRY" else
+                    "안 들어간 게 맞았던 후보" if result == "FILTERED_OK" else
+                    "동일 5분봉 안에서 목표/무효가 함께 보여 수동 복기 필요"
+                ),
+            }
+            append_event({"strategy": strategy, "event": "CANDIDATE_CLOSE", **resolved})
+            break
+
+        updated.append(resolved or candidate)
+
+    state["watch_candidates"] = updated[-200:]
+
+
 def open_trade(strategy: str, state: dict[str, Any], symbol: str, signal: PaperSignal) -> None:
     trade = {
         "symbol": symbol,
@@ -289,15 +437,22 @@ def close_trade(
 
 def summary(strategy_state: dict[str, Any]) -> dict[str, Any]:
     trades = strategy_state.get("closed_trades", [])
+    candidates = strategy_state.get("watch_candidates", [])
     wins = sum(1 for trade in trades if trade.get("result") == "WIN")
     losses = sum(1 for trade in trades if trade.get("result") == "LOSS")
     pnl = sum(float(trade.get("pnl_points", 0.0)) for trade in trades)
+    missed = sum(1 for candidate in candidates if candidate.get("candidate_result") == "MISSED_ENTRY")
+    filtered_ok = sum(1 for candidate in candidates if candidate.get("candidate_result") == "FILTERED_OK")
+    candidate_open = sum(1 for candidate in candidates if not candidate.get("candidate_result"))
     return {
         "trades": len(trades),
         "wins": wins,
         "losses": losses,
         "pnl_points": round(pnl, 2),
         "open": bool(strategy_state.get("open_trade")),
+        "candidate_open": candidate_open,
+        "missed_entries": missed,
+        "filtered_ok": filtered_ok,
     }
 
 
@@ -312,13 +467,25 @@ def run_tick(state: dict[str, Any], symbol: str, interval: str, range_name: str,
     strategies = state["strategies"]
     for name, strategy_state in strategies.items():
         update_open_trade(name, strategy_state, bars)
+        update_watch_candidates(name, strategy_state, bars)
         if strategy_state.get("open_trade"):
             continue
         if name == "zukkumi_rules":
             signal = zukkumi_signal(symbol, bars, pivots, context, min_level=2, min_rr=min_rr)
+            observation = zukkumi_observation_candidate(symbol, bars, pivots, context, observe_min_rr=0.50)
         else:
             signal = public_indicator_signal(bars, min_level=3)
+            observation = signal
         if signal is None:
+            if observation is not None:
+                open_candidate(
+                    name,
+                    strategy_state,
+                    symbol,
+                    observation,
+                    status="NO_TRADE_CANDIDATE",
+                    filter_reason=candidate_filter_reason(observation, trade_min_level=2 if name == "zukkumi_rules" else 3, trade_min_rr=min_rr),
+                )
             continue
         key = signal_key(name, symbol, signal)
         if key in strategy_state.get("seen_signal_keys", []):

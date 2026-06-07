@@ -25,10 +25,17 @@ STATE_PATH = LOG_DIR / "render_dual_paper_state.json"
 JSONL_PATH = LOG_DIR / "render_dual_paper_events.jsonl"
 
 STRATEGY_VERSIONS = {
-    "zukkumi_rules": "zukkumi_v4_premarket_rounding",
-    "public_indicator_rules": "public_indicator_v1",
-    "ny_orb_observation_rules": "ny_orb_v1_observation",
-    "score_indicator_rules": "score_indicator_v1_observation",
+    "zukkumi_original": "zukkumi_original_v4",
+    "indicator_basic": "indicator_basic_v1",
+    "orb_watch": "orb_watch_v1",
+    "score_watch": "score_watch_v1",
+}
+
+LEGACY_STRATEGY_NAMES = {
+    "zukkumi_rules": "zukkumi_original",
+    "public_indicator_rules": "indicator_basic",
+    "ny_orb_observation_rules": "orb_watch",
+    "score_indicator_rules": "score_watch",
 }
 
 
@@ -120,6 +127,27 @@ def initial_strategy_state(name: str | None = None) -> dict[str, Any]:
 
 def ensure_strategy_state(state: dict[str, Any]) -> None:
     strategies = state.setdefault("strategies", {})
+    for old_name, new_name in LEGACY_STRATEGY_NAMES.items():
+        if old_name in strategies and new_name not in strategies:
+            strategies[new_name] = strategies.pop(old_name)
+        elif old_name in strategies and new_name in strategies:
+            old_state = strategies.pop(old_name)
+            strategies[new_name]["closed_trades"] = [
+                *old_state.get("closed_trades", []),
+                *strategies[new_name].get("closed_trades", []),
+            ][-500:]
+            strategies[new_name]["watch_candidates"] = [
+                *old_state.get("watch_candidates", []),
+                *strategies[new_name].get("watch_candidates", []),
+            ][-200:]
+            strategies[new_name]["seen_signal_keys"] = [
+                *old_state.get("seen_signal_keys", []),
+                *strategies[new_name].get("seen_signal_keys", []),
+            ][-300:]
+            strategies[new_name]["seen_candidate_keys"] = [
+                *old_state.get("seen_candidate_keys", []),
+                *strategies[new_name].get("seen_candidate_keys", []),
+            ][-500:]
     for name in STRATEGY_VERSIONS:
         if name not in strategies:
             strategies[name] = initial_strategy_state(name)
@@ -142,10 +170,10 @@ def load_state(reset: bool) -> dict[str, Any]:
         "session_started_at": now_text(),
         "mode": "render_dual_paper",
         "strategies": {
-            "zukkumi_rules": initial_strategy_state("zukkumi_rules"),
-            "public_indicator_rules": initial_strategy_state("public_indicator_rules"),
-            "ny_orb_observation_rules": initial_strategy_state("ny_orb_observation_rules"),
-            "score_indicator_rules": initial_strategy_state("score_indicator_rules"),
+            "zukkumi_original": initial_strategy_state("zukkumi_original"),
+            "indicator_basic": initial_strategy_state("indicator_basic"),
+            "orb_watch": initial_strategy_state("orb_watch"),
+            "score_watch": initial_strategy_state("score_watch"),
         },
     }
     ensure_strategy_state(state)
@@ -1051,7 +1079,7 @@ def run_tick(state: dict[str, Any], symbol: str, interval: str, range_name: str,
         update_watch_candidates(name, strategy_state, bars)
         if strategy_state.get("open_trade"):
             continue
-        if name == "zukkumi_rules":
+        if name == "zukkumi_original":
             signal = zukkumi_signal(symbol, bars, pivots, context, min_level=2, min_rr=min_rr)
             observations = []
             strict_observation = zukkumi_observation_candidate(symbol, bars, pivots, context, observe_min_rr=0.50)
@@ -1059,15 +1087,15 @@ def run_tick(state: dict[str, Any], symbol: str, interval: str, range_name: str,
                 observations.append(strict_observation)
             observations.extend(broad_zukkumi_observation_candidates(bars, pivots, context, min_rr=min_rr))
             trade_min_level = 2
-        elif name == "public_indicator_rules":
+        elif name == "indicator_basic":
             signal = public_indicator_signal(bars, min_level=3)
             observations = [signal] if signal is not None else []
             trade_min_level = 3
-        elif name == "ny_orb_observation_rules":
+        elif name == "orb_watch":
             signal = None
             observations = ny_orb_observation_candidates(bars)
             trade_min_level = 99
-        elif name == "score_indicator_rules":
+        elif name == "score_watch":
             signal = None
             observations = score_indicator_observation_candidates(bars)
             trade_min_level = 99

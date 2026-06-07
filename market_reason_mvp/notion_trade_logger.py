@@ -89,8 +89,8 @@ def _event_title(record: dict[str, Any]) -> str:
 
 def build_properties(record: dict[str, Any]) -> dict[str, Any]:
     summaries = record.get("summaries") or {}
-    z_summary = summaries.get("zukkumi_rules") or {}
-    p_summary = summaries.get("public_indicator_rules") or {}
+    z_summary = summaries.get("zukkumi_original") or summaries.get("zukkumi_rules") or {}
+    p_summary = summaries.get("indicator_basic") or summaries.get("public_indicator_rules") or {}
     strategy = record.get("strategy") or "render"
     event = record.get("event")
     opened_at = record.get("opened_at_text")

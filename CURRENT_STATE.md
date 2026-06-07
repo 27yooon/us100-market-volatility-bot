@@ -853,3 +853,26 @@
   - `python3 market_reason_mvp/render_dual_paper_worker.py --once --reset --symbol=NQ=F --poll=300` 통과.
   - 주말이라 최신 5분봉은 2026-06-06 05:59:59 KST 금요일 마감봉으로 잡힘.
   - 테스트에서 `score_indicator_rules` SHORT 관찰 후보 1건 생성됨. 실제 거래 아님.
+
+## 전략 이름 재명명
+
+- 작업 시각: 2026-06-07 KST
+- 이유: 기존 이름 `zukkumi_rules`, `public_indicator_rules`, `ny_orb_observation_rules`, `score_indicator_rules`가 대화에서 헷갈려서, 실제로 들어가는 전략과 관찰만 하는 전략이 바로 보이도록 이름을 정리했다.
+- 앞으로 대화에서 부를 이름:
+  - `쭈꾸미 원본`: 우리가 직접 정한 P라인, 라운딩, 피봇, EMA 중심 실제 모의매매 기준.
+  - `기본지표`: Bollinger, EMA, RSI, ATR 기반 기본 공개지표 비교군. 실제 모의매매 가능.
+  - `오픈박스 관찰`: NY 오픈 22:30~23:00 KST 박스/ORB 후보만 관찰. 실제 진입 안 함.
+  - `점수제 관찰`: EMA, Bollinger, RSI, MACD, Stochastic, ATR을 점수화해 후보만 관찰. 실제 진입 안 함.
+- 코드 내부 이름:
+  - `쭈꾸미 원본` = `zukkumi_original`
+  - `기본지표` = `indicator_basic`
+  - `오픈박스 관찰` = `orb_watch`
+  - `점수제 관찰` = `score_watch`
+- 전략 버전:
+  - `zukkumi_original`: `zukkumi_original_v4`
+  - `indicator_basic`: `indicator_basic_v1`
+  - `orb_watch`: `orb_watch_v1`
+  - `score_watch`: `score_watch_v1`
+- 호환 처리:
+  - Render 상태 파일에 예전 이름이 남아 있어도 새 이름으로 자동 이전하도록 `render_dual_paper_worker.py`에 마이그레이션을 넣었다.
+  - Notion 요약 로거도 새 이름과 예전 이름을 모두 읽을 수 있게 수정했다.

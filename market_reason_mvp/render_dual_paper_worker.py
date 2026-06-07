@@ -12,7 +12,7 @@ import json
 import math
 import time
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +23,13 @@ import notion_trade_logger
 LOG_DIR = bot.PROJECT_DIR / "logs"
 STATE_PATH = LOG_DIR / "render_dual_paper_state.json"
 JSONL_PATH = LOG_DIR / "render_dual_paper_events.jsonl"
+
+STRATEGY_VERSIONS = {
+    "zukkumi_rules": "zukkumi_v4_premarket_rounding",
+    "public_indicator_rules": "public_indicator_v1",
+    "ny_orb_observation_rules": "ny_orb_v1_observation",
+    "score_indicator_rules": "score_indicator_v1_observation",
+}
 
 
 @dataclass(frozen=True)
@@ -39,6 +46,10 @@ class PaperSignal:
     rr: float | None = None
     invalidation: str | None = None
     observation_type: str | None = None
+    strategy_version: str | None = None
+    score_total: int | None = None
+    score_breakdown: dict[str, Any] | None = None
+    quality_tier: str | None = None
 
 
 def now_text() -> str:
@@ -61,6 +72,31 @@ def session_label(unix_ts: int) -> str:
     return "OFF_HOURS"
 
 
+def local_dt(unix_ts: int) -> datetime:
+    return datetime.fromtimestamp(unix_ts, tz=timezone.utc).astimezone(bot.KST)
+
+
+def ny_session_date(unix_ts: int) -> datetime.date:
+    local = local_dt(unix_ts)
+    if local.hour < 5:
+        local = local - timedelta(days=1)
+    return local.date()
+
+
+def strategy_version(strategy: str) -> str:
+    return STRATEGY_VERSIONS.get(strategy, strategy)
+
+
+def quality_tier(score: int | None) -> str | None:
+    if score is None:
+        return None
+    if score >= 80:
+        return "HIGH"
+    if score >= 60:
+        return "NORMAL"
+    return "LOW"
+
+
 def append_event(record: dict[str, Any]) -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     record = {"logged_at": now_text(), **record}
@@ -71,8 +107,25 @@ def append_event(record: dict[str, Any]) -> None:
         notion_trade_logger.send(record)
 
 
-def initial_strategy_state() -> dict[str, Any]:
-    return {"open_trade": None, "closed_trades": [], "seen_signal_keys": []}
+def initial_strategy_state(name: str | None = None) -> dict[str, Any]:
+    return {
+        "open_trade": None,
+        "closed_trades": [],
+        "seen_signal_keys": [],
+        "watch_candidates": [],
+        "seen_candidate_keys": [],
+        "strategy_version": strategy_version(name or ""),
+    }
+
+
+def ensure_strategy_state(state: dict[str, Any]) -> None:
+    strategies = state.setdefault("strategies", {})
+    for name in STRATEGY_VERSIONS:
+        if name not in strategies:
+            strategies[name] = initial_strategy_state(name)
+        strategies[name].setdefault("watch_candidates", [])
+        strategies[name].setdefault("seen_candidate_keys", [])
+        strategies[name]["strategy_version"] = strategy_version(name)
 
 
 def load_state(reset: bool) -> dict[str, Any]:
@@ -82,15 +135,21 @@ def load_state(reset: bool) -> dict[str, Any]:
             if path.exists():
                 path.unlink()
     if STATE_PATH.exists():
-        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
-    return {
+        state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        ensure_strategy_state(state)
+        return state
+    state = {
         "session_started_at": now_text(),
         "mode": "render_dual_paper",
         "strategies": {
-            "zukkumi_rules": initial_strategy_state(),
-            "public_indicator_rules": initial_strategy_state(),
+            "zukkumi_rules": initial_strategy_state("zukkumi_rules"),
+            "public_indicator_rules": initial_strategy_state("public_indicator_rules"),
+            "ny_orb_observation_rules": initial_strategy_state("ny_orb_observation_rules"),
+            "score_indicator_rules": initial_strategy_state("score_indicator_rules"),
         },
     }
+    ensure_strategy_state(state)
+    return state
 
 
 def save_state(state: dict[str, Any]) -> None:
@@ -144,6 +203,27 @@ def bollinger(values: list[float], n: int = 20, k: float = 2.0) -> tuple[float, 
     variance = sum((value - mid) ** 2 for value in recent) / n
     std = math.sqrt(variance)
     return mid, mid + k * std, mid - k * std
+
+
+def macd_histogram(values: list[float], fast_n: int = 12, slow_n: int = 26, signal_n: int = 9) -> float | None:
+    if len(values) < slow_n + signal_n:
+        return None
+    fast_values = ema(values, fast_n)
+    slow_values = ema(values, slow_n)
+    macd_values = [fast - slow for fast, slow in zip(fast_values, slow_values)]
+    signal_values = ema(macd_values, signal_n)
+    return macd_values[-1] - signal_values[-1]
+
+
+def stochastic_k(bars: list[bot.Bar], n: int = 14) -> float | None:
+    if len(bars) < n:
+        return None
+    recent = bars[-n:]
+    low = min(bar.low for bar in recent)
+    high = max(bar.high for bar in recent)
+    if high <= low:
+        return None
+    return ((bars[-1].close - low) / (high - low)) * 100
 
 
 def signal_key(strategy: str, symbol: str, signal: PaperSignal) -> str:
@@ -247,6 +327,8 @@ def build_observation_signal(
     reasons: list[str],
     cautions: list[str],
     observation_type: str,
+    score_total: int | None = None,
+    score_breakdown: dict[str, Any] | None = None,
 ) -> PaperSignal | None:
     target = entry + 50 if side == "LONG" else entry - 50
     rr = rr_for_signal(side, entry, stop, target)
@@ -268,6 +350,9 @@ def build_observation_signal(
         rr=rr,
         invalidation=invalidation,
         observation_type=observation_type,
+        score_total=score_total,
+        score_breakdown=score_breakdown,
+        quality_tier=quality_tier(score_total),
     )
 
 
@@ -513,6 +598,245 @@ def public_indicator_signal(bars: list[bot.Bar], min_level: int) -> PaperSignal 
     return None
 
 
+def score_indicator_observation_candidates(bars: list[bot.Bar]) -> list[PaperSignal]:
+    if len(bars) < 90:
+        return []
+
+    closes = [bar.close for bar in bars]
+    ema20 = ema(closes, 20)
+    ema50 = ema(closes, 50)
+    ema200 = ema(closes, 200) if len(closes) >= 200 else []
+    current_rsi = rsi(closes, 14)
+    current_atr = atr(bars, 14)
+    bands = bollinger(closes, 20)
+    macd_hist = macd_histogram(closes)
+    stoch = stochastic_k(bars, 14)
+    if current_rsi is None or current_atr is None or bands is None or macd_hist is None or stoch is None:
+        return []
+
+    last = bars[-1]
+    prev = bars[-2]
+    mid, upper, lower = bands
+    recent = bars[-8:]
+    recent_low = min(bar.low for bar in recent)
+    recent_high = max(bar.high for bar in recent)
+    body = abs(last.close - last.open)
+    candle_range = max(last.high - last.low, 0.01)
+    chase_candle = body > current_atr * 1.2 or candle_range > current_atr * 1.8
+    session = session_label(last.ts)
+    out: list[PaperSignal] = []
+
+    def build_score(side: str) -> tuple[int, dict[str, Any], list[str], list[str]]:
+        score = 0
+        breakdown: dict[str, Any] = {}
+        reasons: list[str] = []
+        cautions: list[str] = []
+
+        trend_ok = ema20[-1] >= ema50[-1] if side == "LONG" else ema20[-1] <= ema50[-1]
+        breakdown["ema20_50"] = 20 if trend_ok else 0
+        score += breakdown["ema20_50"]
+        reasons.append("EMA20/50 방향 일치" if trend_ok else "EMA20/50 방향 불일치")
+
+        if ema200:
+            long_term_ok = last.close >= ema200[-1] if side == "LONG" else last.close <= ema200[-1]
+            breakdown["ema200"] = 10 if long_term_ok else 0
+            score += breakdown["ema200"]
+            if long_term_ok:
+                reasons.append("EMA200 기준 방향 우위")
+
+        if side == "LONG":
+            boll_ok = last.close <= mid or any(bar.low <= lower for bar in recent)
+            rsi_ok = current_rsi <= 55
+            macd_ok = macd_hist >= 0
+            stoch_ok = stoch <= 65
+        else:
+            boll_ok = last.close >= mid or any(bar.high >= upper for bar in recent)
+            rsi_ok = current_rsi >= 45
+            macd_ok = macd_hist <= 0
+            stoch_ok = stoch >= 35
+
+        breakdown["bollinger_position"] = 15 if boll_ok else 0
+        breakdown["rsi"] = 15 if rsi_ok else 0
+        breakdown["macd"] = 15 if macd_ok else 0
+        breakdown["stochastic"] = 10 if stoch_ok else 0
+        score += breakdown["bollinger_position"] + breakdown["rsi"] + breakdown["macd"] + breakdown["stochastic"]
+
+        if boll_ok:
+            reasons.append("Bollinger 위치가 진입 방향과 크게 충돌하지 않음")
+        else:
+            cautions.append("Bollinger 위치 불리")
+        if rsi_ok:
+            reasons.append(f"RSI14 {current_rsi:.1f} 허용")
+        else:
+            cautions.append(f"RSI14 {current_rsi:.1f} 불리")
+        if macd_ok:
+            reasons.append("MACD histogram 방향 일치")
+        else:
+            cautions.append("MACD histogram 방향 불일치")
+        if stoch_ok:
+            reasons.append(f"Stochastic {stoch:.1f} 허용")
+        else:
+            cautions.append(f"Stochastic {stoch:.1f} 불리")
+
+        session_ok = session in {"US_PREMARKET", "US_REGULAR", "EUROPE_TO_US_PRE"}
+        breakdown["session"] = 10 if session_ok else 0
+        score += breakdown["session"]
+        if session_ok:
+            reasons.append(f"거래 관찰 세션 {session}")
+        else:
+            cautions.append(f"비활성 세션 {session}")
+
+        volatility_ok = current_atr >= 8 and not chase_candle
+        breakdown["atr_chase_filter"] = 15 if volatility_ok else 0
+        score += breakdown["atr_chase_filter"]
+        if volatility_ok:
+            reasons.append(f"ATR14 {current_atr:.1f}, 추격 장대 아님")
+        else:
+            cautions.append(f"ATR/장대 필터 주의 ATR14 {current_atr:.1f}")
+
+        breakdown["total"] = score
+        return score, breakdown, reasons, cautions
+
+    for side in ("LONG", "SHORT"):
+        score, breakdown, reasons, cautions = build_score(side)
+        if score < 55:
+            continue
+        if side == "LONG":
+            stop = min(recent_low - current_atr * 0.2, last.close - max(20.0, current_atr * 1.1))
+            setup = "점수제 지표 관찰 롱"
+        else:
+            stop = max(recent_high + current_atr * 0.2, last.close + max(20.0, current_atr * 1.1))
+            setup = "점수제 지표 관찰 숏"
+        signal = build_observation_signal(
+            side,
+            setup,
+            2 if score >= 70 else 1,
+            last.close,
+            stop,
+            last.ts,
+            [f"점수제 공개지표 {score}/100", *reasons],
+            cautions,
+            "SCORE_OBSERVATION",
+            score_total=score,
+            score_breakdown=breakdown,
+        )
+        if signal is not None:
+            out.append(signal)
+
+    return out[:2]
+
+
+def ny_orb_observation_candidates(bars: list[bot.Bar]) -> list[PaperSignal]:
+    if len(bars) < 80:
+        return []
+
+    last = bars[-1]
+    last_local = local_dt(last.ts)
+    minutes = last_local.hour * 60 + last_local.minute
+    if not (minutes >= 23 * 60 or minutes < 5 * 60):
+        return []
+
+    session_day = ny_session_date(last.ts)
+    orb_bars = [
+        bar for bar in bars
+        if ny_session_date(bar.ts) == session_day and 22 * 60 + 30 <= local_dt(bar.ts).hour * 60 + local_dt(bar.ts).minute < 23 * 60
+    ]
+    if len(orb_bars) < 4:
+        return []
+
+    current_atr = atr(bars, 14)
+    if current_atr is None or current_atr <= 0:
+        return []
+
+    orb_high = max(bar.high for bar in orb_bars)
+    orb_low = min(bar.low for bar in orb_bars)
+    orb_mid = (orb_high + orb_low) / 2
+    orb_width = orb_high - orb_low
+    if orb_width <= 0:
+        return []
+
+    recent = [bar for bar in bars if bar.ts > orb_bars[-1].ts][-8:]
+    if not recent:
+        return []
+
+    closes = [bar.close for bar in bars]
+    ema20 = ema(closes, 20)
+    ema50 = ema(closes, 50)
+    buffer = max(3.0, current_atr * 0.15)
+    out: list[PaperSignal] = []
+    width_ratio = orb_width / current_atr
+    base_reasons = [
+        f"NY 오픈 박스 22:30~23:00 KST high {orb_high:.2f} low {orb_low:.2f} mid {orb_mid:.2f}",
+        f"박스폭 {orb_width:.1f}pt / ATR14 {current_atr:.1f} = {width_ratio:.2f}",
+    ]
+    base_cautions: list[str] = []
+    if width_ratio < 0.35:
+        base_cautions.append("박스폭이 ATR 대비 너무 좁아 가짜 돌파 주의")
+    if width_ratio > 2.20:
+        base_cautions.append("박스폭이 ATR 대비 너무 넓어 추격 금지 후보")
+
+    broke_high = any(bar.high > orb_high + buffer for bar in recent)
+    broke_low = any(bar.low < orb_low - buffer for bar in recent)
+    closed_above = last.close > orb_high + buffer
+    closed_below = last.close < orb_low - buffer
+    back_inside_from_high = broke_high and last.close < orb_high
+    back_inside_from_low = broke_low and last.close > orb_low
+    near_mid = abs(last.close - orb_mid) <= max(5.0, current_atr * 0.25)
+
+    def score_for(side: str, setup: str) -> tuple[int, dict[str, Any]]:
+        trend_ok = ema20[-1] >= ema50[-1] if side == "LONG" else ema20[-1] <= ema50[-1]
+        healthy_width = 0.35 <= width_ratio <= 2.20
+        score = 35 + (20 if trend_ok else 0) + (20 if healthy_width else 0) + (15 if not (broke_high and broke_low) else 0) + (10 if session_label(last.ts) == "US_REGULAR" else 0)
+        return score, {
+            "orb_box": 35,
+            "ema_alignment": 20 if trend_ok else 0,
+            "atr_width": 20 if healthy_width else 0,
+            "one_sided_break": 15 if not (broke_high and broke_low) else 0,
+            "session": 10 if session_label(last.ts) == "US_REGULAR" else 0,
+            "orb_high": round(orb_high, 2),
+            "orb_low": round(orb_low, 2),
+            "orb_mid": round(orb_mid, 2),
+            "orb_width": round(orb_width, 2),
+            "width_atr_ratio": round(width_ratio, 2),
+            "setup": setup,
+            "total": score,
+        }
+
+    cases: list[tuple[str, str, bool, float, list[str], list[str]]] = [
+        ("LONG", "ORB 상단 돌파 관찰 롱", closed_above, orb_low - buffer, ["박스 상단 돌파 후 종가 유지"], []),
+        ("SHORT", "ORB 하단 이탈 관찰 숏", closed_below, orb_high + buffer, ["박스 하단 이탈 후 종가 유지"], []),
+        ("SHORT", "ORB 상단 돌파 실패 관찰 숏", back_inside_from_high, orb_high + buffer, ["상단 돌파 실패 후 박스 안 복귀"], []),
+        ("LONG", "ORB 하단 이탈 실패 관찰 롱", back_inside_from_low, orb_low - buffer, ["하단 이탈 실패 후 박스 안 복귀"], []),
+    ]
+    if near_mid and (broke_high or broke_low):
+        side = "LONG" if broke_low and not broke_high else "SHORT" if broke_high and not broke_low else ""
+        if side:
+            stop = orb_low - buffer if side == "LONG" else orb_high + buffer
+            cases.append((side, "ORB 중간값 재테스트 관찰 " + ("롱" if side == "LONG" else "숏"), True, stop, ["박스 돌파/실패 후 중간값 재테스트"], ["방향 재확인 필요"]))
+
+    for side, setup, condition, stop, reasons, cautions in cases:
+        if not condition:
+            continue
+        score, breakdown = score_for(side, setup)
+        signal = build_observation_signal(
+            side,
+            setup,
+            2 if score >= 70 else 1,
+            last.close,
+            stop,
+            last.ts,
+            [*base_reasons, *reasons],
+            [*base_cautions, *cautions],
+            "ORB_OBSERVATION",
+            score_total=score,
+            score_breakdown=breakdown,
+        )
+        if signal is not None:
+            out.append(signal)
+
+    return out[:3]
+
+
 def update_open_trade(strategy: str, state: dict[str, Any], bars: list[bot.Bar]) -> None:
     trade = state.get("open_trade")
     if not trade:
@@ -562,6 +886,7 @@ def open_candidate(
     candidate = {
         "symbol": symbol,
         **asdict(signal),
+        "strategy_version": signal.strategy_version or strategy_version(strategy),
         "candidate_status": status,
         "filter_reason": filter_reason,
         "observed_at": signal.bar_time,
@@ -650,6 +975,7 @@ def open_trade(strategy: str, state: dict[str, Any], symbol: str, signal: PaperS
     trade = {
         "symbol": symbol,
         **asdict(signal),
+        "strategy_version": signal.strategy_version or strategy_version(strategy),
         "opened_at": signal.bar_time,
         "opened_at_text": text_time(signal.bar_time),
         "signal_key": signal_key(strategy, symbol, signal),
@@ -694,7 +1020,9 @@ def summary(strategy_state: dict[str, Any]) -> dict[str, Any]:
     ambiguous = sum(1 for candidate in candidates if candidate.get("candidate_result") == "AMBIGUOUS")
     candidate_open = sum(1 for candidate in candidates if not candidate.get("candidate_result"))
     observation_count = sum(1 for candidate in candidates if candidate.get("observation_type") == "OBSERVATION")
+    typed_observations = sum(1 for candidate in candidates if candidate.get("observation_type"))
     return {
+        "strategy_version": strategy_state.get("strategy_version"),
         "trades": len(trades),
         "wins": wins,
         "losses": losses,
@@ -704,11 +1032,12 @@ def summary(strategy_state: dict[str, Any]) -> dict[str, Any]:
         "missed_entries": missed,
         "filtered_ok": filtered_ok,
         "ambiguous": ambiguous,
-        "observations": observation_count,
+        "observations": typed_observations or observation_count,
     }
 
 
 def run_tick(state: dict[str, Any], symbol: str, interval: str, range_name: str, min_rr: float) -> None:
+    ensure_strategy_state(state)
     bars = bot.parse_bars(bot.fetch_chart(symbol, interval, range_name))
     pivots = bot.compute_pivots(symbol)
     try:
@@ -729,9 +1058,23 @@ def run_tick(state: dict[str, Any], symbol: str, interval: str, range_name: str,
             if strict_observation is not None:
                 observations.append(strict_observation)
             observations.extend(broad_zukkumi_observation_candidates(bars, pivots, context, min_rr=min_rr))
-        else:
+            trade_min_level = 2
+        elif name == "public_indicator_rules":
             signal = public_indicator_signal(bars, min_level=3)
             observations = [signal] if signal is not None else []
+            trade_min_level = 3
+        elif name == "ny_orb_observation_rules":
+            signal = None
+            observations = ny_orb_observation_candidates(bars)
+            trade_min_level = 99
+        elif name == "score_indicator_rules":
+            signal = None
+            observations = score_indicator_observation_candidates(bars)
+            trade_min_level = 99
+        else:
+            signal = None
+            observations = []
+            trade_min_level = 99
         if signal is None:
             for observation in observations:
                 open_candidate(
@@ -739,8 +1082,8 @@ def run_tick(state: dict[str, Any], symbol: str, interval: str, range_name: str,
                     strategy_state,
                     symbol,
                     observation,
-                    status="OBSERVATION_CANDIDATE" if observation.observation_type == "OBSERVATION" else "NO_TRADE_CANDIDATE",
-                    filter_reason=candidate_filter_reason(observation, trade_min_level=2 if name == "zukkumi_rules" else 3, trade_min_rr=min_rr),
+                    status="OBSERVATION_CANDIDATE" if observation.observation_type else "NO_TRADE_CANDIDATE",
+                    filter_reason=candidate_filter_reason(observation, trade_min_level=trade_min_level, trade_min_rr=min_rr),
                 )
             continue
         key = signal_key(name, symbol, signal)
@@ -753,6 +1096,7 @@ def run_tick(state: dict[str, Any], symbol: str, interval: str, range_name: str,
             "event": "HEARTBEAT",
             "symbol": symbol,
             "price": bars[-1].close if bars else None,
+            "strategy_versions": STRATEGY_VERSIONS,
             "summaries": {name: summary(strategy_state) for name, strategy_state in strategies.items()},
         }
     )
@@ -778,6 +1122,7 @@ def main() -> int:
             "symbol": args.symbol,
             "poll": args.poll,
             "telegram": "disabled",
+            "strategy_versions": STRATEGY_VERSIONS,
         }
     )
     while True:

@@ -772,3 +772,84 @@
 - 주의:
   - 이 repo는 MT5/브로커/Windows 전제가 강해서 Render의 yfinance 기반 쭈꾸미에 그대로 붙이면 안 된다.
   - 쭈꾸미에는 매매법 복사보다 `점수화/기록/검증 구조`를 가져오는 것이 맞다.
+
+## ORB 전략 첨부 방향
+
+- 논의 시각: 2026-06-07 KST
+- ORB 뜻: Opening Range Breakout. 미국 정규장 시작 직후 일정 시간의 고가/저가 박스를 잡고, 그 박스를 돌파하거나 돌파 실패하는 흐름을 매매 후보로 보는 방식.
+- 쭈꾸미 적용 방식:
+  - 처음부터 실제 진입 전략으로 넣지 않는다.
+  - 먼저 `public_indicator_rules`와 별도의 `orb_observation_rules` 또는 `ny_open_range_rules`로 관찰 후보만 쌓는다.
+  - 기준 시간은 NY 오픈 후 15분 또는 30분 박스다. 한국시간 기준으로 일반적으로 22:30~22:45 또는 22:30~23:00이며, 서머타임/비서머타임 변경은 별도 처리해야 한다.
+  - 기록할 항목: 박스 상단, 박스 하단, 박스 폭, 돌파 방향, VWAP/EMA 위치, ATR 대비 박스 크기, 돌파 후 되돌림 여부, 결과.
+  - 쭈꾸미 기존 P라인/라운딩 전략과 충돌시키지 않고, 같은 시간대에 별도 후보로 기록한다.
+- 우선 관찰할 후보:
+  - `ORB_LONG_BREAKOUT`: 박스 상단 돌파 후 유지
+  - `ORB_SHORT_BREAKOUT`: 박스 하단 돌파 후 유지
+  - `ORB_FAILED_LONG`: 상단 돌파 실패 후 박스 안으로 복귀, 숏 관찰
+  - `ORB_FAILED_SHORT`: 하단 돌파 실패 후 박스 안으로 복귀, 롱 관찰
+- 실제 진입 전 필요한 검증:
+  - 최소 2주 이상 관찰
+  - 롱/숏 각각 최소 10건 이상
+  - 승률보다 먼저 `박스 폭`, `ATR`, `시간대`, `돌파 후 되돌림`별 결과를 본다.
+  - 바로 들어가는 돌파형이 좋은지, 돌파 후 되돌림 확인형이 좋은지 분리해서 비교한다.
+
+## GitHub/TradingView 참고 아이디어 적용 순서
+
+- 논의 시각: 2026-06-07 KST
+- 결론: 전략을 바로 많이 추가하지 않고, 먼저 기록/비교 체계를 고정한 뒤 ORB와 점수제 전략을 관찰 후보로 붙인다.
+- 1단계: 전략 버전 기록
+  - 모든 이벤트에 `strategy_version`을 붙인다.
+  - 예: `zukkumi_v1`, `zukkumi_v2_pivot_short`, `zukkumi_v3_candidate_log`, `zukkumi_v4_premarket_rounding`, `ny_orb_v1_observation`, `score_indicator_v1`.
+  - 이유: 룰이 자주 바뀌면 같은 `zukkumi_rules` 안에 서로 다른 조건의 결과가 섞여 검증이 불가능해진다.
+- 2단계: NY 오픈 박스 기록
+  - 22:30~23:00 KST 박스의 high, low, mid, width를 매일 기록한다.
+  - 후보 유형: 상단 돌파 롱, 하단 이탈 숏, 상단 돌파 실패 숏, 하단 이탈 실패 롱, mid 재테스트.
+  - 처음에는 실제 진입이 아니라 관찰 후보만 기록한다.
+- 3단계: ATR 변동성 필터
+  - 박스 폭이 ATR 대비 너무 작으면 돌파 신뢰도가 낮으므로 후보만 기록한다.
+  - 박스 폭이 ATR 대비 너무 크거나 직전 장대봉이면 추격 금지 후보로 기록한다.
+  - 실거래 전에는 `blocked_reason`으로 남기고, 모의매매 단계에서는 통계 비교용으로 보관한다.
+- 4단계: 점수제 공개지표 전략
+  - 기존 `public_indicator_rules`를 바로 삭제하지 않고, 새 전략 `score_indicator_rules`로 별도 추가한다.
+  - 점수 항목: EMA 방향, Bollinger 위치, RSI, MACD, Stochastic, ATR, 시간대, 추격 여부.
+  - 결과 기록: `score_total`, `score_breakdown`, `quality_tier`.
+- 5단계: 자동 리포트
+  - 전략별, 버전별, 롱/숏별, 시간대별, 요일별로 거래 수, 승률, 손익합, Profit Factor, Max Drawdown, 연속 손실을 집계한다.
+  - 노션에는 개별 거래/후보를 쌓고, 코드에서는 요약 리포트를 생성한다.
+- 적용 원칙:
+  - 기존 `zukkumi_rules`의 실제 진입 로직은 갑자기 바꾸지 않는다.
+  - 새 아이디어는 `observation`으로 최소 2주 쌓은 뒤 실제 진입 후보로 승격한다.
+  - 우선 필요한 것은 자동매매 완성보다, 나중에 믿을 수 있는 데이터가 쌓이는 구조다.
+
+## 쭈꾸미 오리지널 보존 + 업그레이드 관찰 전략 추가
+
+- 작업 시각: 2026-06-07 KST
+- 원칙:
+  - `zukkumi_rules` 실제 진입 로직은 건드리지 않는다.
+  - `public_indicator_rules` 실제 진입 로직도 기존 비교군으로 남긴다.
+  - 업그레이드 아이디어는 별도 관찰 전략으로만 기록한다.
+- 코드 변경:
+  - 파일: `market_reason_mvp/render_dual_paper_worker.py`
+  - 모든 전략 상태/이벤트에 `strategy_version`을 붙이도록 추가.
+  - 새 관찰 전략 `ny_orb_observation_rules` 추가.
+  - 새 관찰 전략 `score_indicator_rules` 추가.
+- 전략 버전:
+  - `zukkumi_rules`: `zukkumi_v4_premarket_rounding`
+  - `public_indicator_rules`: `public_indicator_v1`
+  - `ny_orb_observation_rules`: `ny_orb_v1_observation`
+  - `score_indicator_rules`: `score_indicator_v1_observation`
+- `ny_orb_observation_rules`:
+  - 한국시간 22:30~23:00 NY 오픈 박스를 계산한다.
+  - high, low, mid, width, ATR 대비 박스폭을 기록한다.
+  - 상단 돌파 롱, 하단 이탈 숏, 상단 돌파 실패 숏, 하단 이탈 실패 롱, 중간값 재테스트를 관찰 후보로 남긴다.
+  - 실제 진입은 하지 않는다.
+- `score_indicator_rules`:
+  - EMA20/50, EMA200, Bollinger 위치, RSI, MACD histogram, Stochastic, 세션, ATR/추격 필터를 점수화한다.
+  - `score_total`, `score_breakdown`, `quality_tier`를 후보 이벤트에 기록한다.
+  - 실제 진입은 하지 않는다.
+- 테스트:
+  - `python3 -m py_compile market_reason_mvp/render_dual_paper_worker.py market_reason_mvp/market_signal_bot.py market_reason_mvp/notion_trade_logger.py` 통과.
+  - `python3 market_reason_mvp/render_dual_paper_worker.py --once --reset --symbol=NQ=F --poll=300` 통과.
+  - 주말이라 최신 5분봉은 2026-06-06 05:59:59 KST 금요일 마감봉으로 잡힘.
+  - 테스트에서 `score_indicator_rules` SHORT 관찰 후보 1건 생성됨. 실제 거래 아님.

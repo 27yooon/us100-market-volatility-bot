@@ -49,6 +49,18 @@ def text_time(unix_ts: int) -> str:
     return datetime.fromtimestamp(unix_ts, tz=timezone.utc).astimezone(bot.KST).strftime("%Y-%m-%d %H:%M:%S KST")
 
 
+def session_label(unix_ts: int) -> str:
+    local = datetime.fromtimestamp(unix_ts, tz=timezone.utc).astimezone(bot.KST)
+    minutes = local.hour * 60 + local.minute
+    if 17 * 60 <= minutes < 22 * 60 + 30:
+        return "US_PREMARKET"
+    if 22 * 60 + 30 <= minutes or minutes < 5 * 60:
+        return "US_REGULAR"
+    if 15 * 60 <= minutes < 17 * 60:
+        return "EUROPE_TO_US_PRE"
+    return "OFF_HOURS"
+
+
 def append_event(record: dict[str, Any]) -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     record = {"logged_at": now_text(), **record}
@@ -240,6 +252,8 @@ def build_observation_signal(
     rr = rr_for_signal(side, entry, stop, target)
     if rr is None:
         return None
+    session = session_label(bar_time)
+    enriched_reasons = [*reasons, f"세션 {session}"]
     invalidation = f"{stop:.2f} 아래 5분봉 마감" if side == "LONG" else f"{stop:.2f} 위 5분봉 마감"
     return PaperSignal(
         side=side,
@@ -249,7 +263,7 @@ def build_observation_signal(
         stop=stop,
         target=target,
         bar_time=bar_time,
-        reasons=reasons,
+        reasons=enriched_reasons,
         cautions=cautions,
         rr=rr,
         invalidation=invalidation,
@@ -279,6 +293,8 @@ def broad_zukkumi_observation_candidates(
     buffer = max(5.0, atr_value * 0.20)
     zone = max(15.0, atr_value * 0.75)
     out: list[PaperSignal] = []
+    session = session_label(last.ts)
+    premarket = session == "US_PREMARKET"
 
     def level_from_rr(rr: float | None, core_count: int) -> int:
         if rr is None:
@@ -359,16 +375,23 @@ def broad_zukkumi_observation_candidates(
     base_range = base_high - base_low
     previous = bars[-18:-6]
     previous_range = (max(bar.high for bar in previous) - min(bar.low for bar in previous)) if previous else 0
-    quiet_base = base_range <= max(atr_value * 1.50, previous_range * 0.55)
+    quiet_multiplier = 1.80 if premarket else 1.50
+    previous_ratio = 0.70 if premarket else 0.55
+    quiet_base = base_range <= max(atr_value * quiet_multiplier, previous_range * previous_ratio)
     if quiet_base:
         previous_high = max(bar.high for bar in previous)
         previous_low = min(bar.low for bar in previous)
         drop_into_base = previous_high - base_low
         rise_into_base = base_high - previous_low
 
-        if drop_into_base >= atr_value and last.close >= base_low + base_range * 0.35:
+        drop_threshold = atr_value * (0.70 if premarket else 1.00)
+        rise_threshold = atr_value * (0.70 if premarket else 1.00)
+
+        if drop_into_base >= drop_threshold and last.close >= base_low + base_range * 0.30:
             reasons = ["라운딩 관찰 바닥", "하락 후 봉 축소/횡보", "저점 재이탈 여부 관찰"]
             cautions = []
+            if premarket:
+                reasons.append("프리장 라인 미터치 라운딩 허용")
             if last.close >= fast[-1] - atr_value * 0.20:
                 reasons.append("EMA20 회복 시도")
             else:
@@ -388,9 +411,11 @@ def broad_zukkumi_observation_candidates(
             if signal is not None:
                 out.append(signal)
 
-        if rise_into_base >= atr_value and last.close <= base_high - base_range * 0.35:
+        if rise_into_base >= rise_threshold and last.close <= base_high - base_range * 0.30:
             reasons = ["라운딩 관찰 천장", "상승 후 봉 축소/횡보", "고점 재돌파 여부 관찰"]
             cautions = []
+            if premarket:
+                reasons.append("프리장 라인 미터치 라운딩 허용")
             if last.close <= fast[-1] + atr_value * 0.20:
                 reasons.append("EMA20 이탈 시도")
             else:

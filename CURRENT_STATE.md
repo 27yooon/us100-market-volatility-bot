@@ -305,6 +305,24 @@
 	  - 주의:
 	    - Notion 자동기록은 여전히 Render 환경변수 `NOTION_API_TOKEN`, `NOTION_DATABASE_ID`가 설정된 경우에만 동작한다.
 	    - Codex/ChatGPT Notion 커넥터는 사용하지 않는다.
+	- 2026-06-07 후보 기준 확장 패치:
+	  - 사용자 지적: 하루에 실제 거래가 0회면 데이터가 쌓이지 않으므로, 진입 기준과 후보 기록 기준을 분리해야 한다.
+	  - 반영 파일:
+	    - `market_reason_mvp/render_dual_paper_worker.py`
+	    - `market_reason_mvp/notion_trade_logger.py`
+	  - 실제 모의 진입 기준은 기존처럼 엄격하게 유지한다.
+	  - 새 관찰 후보:
+	    - `P라인 관찰 롱`: P라인 근처에서 저점/회복 후보가 보이는 자리.
+	    - `P라인 관찰 숏`: P라인 근처에서 반등/저항 후보가 보이는 자리.
+	    - `라운딩 관찰 롱`: 하락 후 봉 축소/횡보로 바닥 후보가 보이는 자리.
+	    - `라운딩 관찰 숏`: 상승 후 봉 축소/횡보로 천장 후보가 보이는 자리.
+	  - 관찰 후보는 실제 진입하지 않고 `CANDIDATE_OPEN`으로 기록한 뒤, 이후 +50pt와 무효 기준 중 어느 쪽이 먼저 나오는지 후행 평가한다.
+	  - HEARTBEAT 요약에 `ambiguous`, `observations`를 추가했다.
+	  - Notion API logger에도 `Observation Type`, 후보/관찰 요약 수치를 추가했다.
+	  - 검증:
+	    - 로컬/업로드용 모두 `python3 -m py_compile ...` 통과.
+	    - 업로드용 `python3 market_reason_mvp/render_dual_paper_worker.py --once --reset --symbol=NQ=F --poll=300` 통과.
+	  - 현재 테스트 시점 가격 `NQ=F 29026.5`에서는 관찰 후보 0개였다. 이는 실행 오류가 아니라 현재 가격이 P라인/라운딩 관찰 조건에 걸리지 않았다는 의미다.
 
 ## 현재 봇 상태
 

@@ -38,6 +38,7 @@ class PaperSignal:
     cautions: list[str]
     rr: float | None = None
     invalidation: str | None = None
+    observation_type: str | None = None
 
 
 def now_text() -> str:
@@ -198,6 +199,226 @@ def zukkumi_observation_candidate(
     )
 
 
+def paper_signal_from_candidate(candidate: bot.SignalCandidate, observation_type: str | None = None) -> PaperSignal:
+    target = candidate.entry + 50 if candidate.side == "LONG" else candidate.entry - 50
+    return PaperSignal(
+        side=candidate.side,
+        setup_type=candidate.setup_type,
+        level=candidate.level,
+        entry=candidate.entry,
+        stop=candidate.stop,
+        target=target,
+        bar_time=candidate.bar_time,
+        reasons=candidate.reasons,
+        cautions=candidate.cautions,
+        rr=candidate.rr,
+        invalidation=candidate.invalidation,
+        observation_type=observation_type,
+    )
+
+
+def rr_for_signal(side: str, entry: float, stop: float, target: float) -> float | None:
+    risk = entry - stop if side == "LONG" else stop - entry
+    reward = target - entry if side == "LONG" else entry - target
+    if risk <= 0 or reward <= 0:
+        return None
+    return reward / risk
+
+
+def build_observation_signal(
+    side: str,
+    setup_type: str,
+    level: int,
+    entry: float,
+    stop: float,
+    bar_time: int,
+    reasons: list[str],
+    cautions: list[str],
+    observation_type: str,
+) -> PaperSignal | None:
+    target = entry + 50 if side == "LONG" else entry - 50
+    rr = rr_for_signal(side, entry, stop, target)
+    if rr is None:
+        return None
+    invalidation = f"{stop:.2f} 아래 5분봉 마감" if side == "LONG" else f"{stop:.2f} 위 5분봉 마감"
+    return PaperSignal(
+        side=side,
+        setup_type=setup_type,
+        level=level,
+        entry=entry,
+        stop=stop,
+        target=target,
+        bar_time=bar_time,
+        reasons=reasons,
+        cautions=cautions,
+        rr=rr,
+        invalidation=invalidation,
+        observation_type=observation_type,
+    )
+
+
+def broad_zukkumi_observation_candidates(
+    bars: list[bot.Bar],
+    pivots: bot.PivotLevels | None,
+    context: list[bot.MarketMove],
+    min_rr: float,
+) -> list[PaperSignal]:
+    if len(bars) < 80:
+        return []
+
+    closes = [bar.close for bar in bars]
+    fast = ema(closes, 20)
+    slow = ema(closes, 50)
+    atr_value = atr(bars, 14)
+    if atr_value is None or atr_value <= 0:
+        return []
+
+    last = bars[-1]
+    recent = bars[-8:]
+    base = bars[-6:]
+    buffer = max(5.0, atr_value * 0.20)
+    zone = max(15.0, atr_value * 0.75)
+    out: list[PaperSignal] = []
+
+    def level_from_rr(rr: float | None, core_count: int) -> int:
+        if rr is None:
+            return 1
+        if core_count >= 4 and rr >= min_rr:
+            return 2
+        if core_count >= 3:
+            return 1
+        return 1
+
+    long_bias, short_bias, _ = bot.score_market_bias(context)
+    fast_above = fast[-1] >= slow[-1]
+    fast_below = fast[-1] <= slow[-1]
+    recent_low = min(bar.low for bar in recent)
+    recent_high = max(bar.high for bar in recent)
+
+    if pivots is not None:
+        pp = pivots.pp
+        touched_p = any(bar.low <= pp + zone and bar.high >= pp - zone for bar in recent)
+        if touched_p and last.close >= pp - zone:
+            reasons = [f"P라인 관찰 구간({pp:.2f})", "P라인 근처 저점/회복 후보"]
+            cautions: list[str] = []
+            if recent_low >= pp - zone:
+                reasons.append("P라인 근처 가격 방어")
+            if last.close >= fast[-1] - atr_value * 0.20:
+                reasons.append("EMA20 근처 회복 시도")
+            else:
+                cautions.append("아직 EMA20 아래")
+            if fast_above:
+                reasons.append("EMA20/50 상승 우위")
+            if short_bias > long_bias + 1:
+                cautions.append("시장 보조지표는 롱에 불리")
+            stop = min(recent_low, pp) - buffer
+            signal = build_observation_signal(
+                "LONG",
+                "P라인 관찰 롱",
+                level_from_rr(rr_for_signal("LONG", last.close, stop, last.close + 50), len(reasons)),
+                last.close,
+                stop,
+                last.ts,
+                reasons,
+                cautions,
+                "OBSERVATION",
+            )
+            if signal is not None:
+                out.append(signal)
+
+        if touched_p and last.close <= pp + zone:
+            reasons = [f"P라인 관찰 구간({pp:.2f})", "P라인 근처 반등/저항 후보"]
+            cautions = []
+            if recent_high <= pp + zone:
+                reasons.append("P라인 근처 돌파 제한")
+            if last.close <= fast[-1] + atr_value * 0.20:
+                reasons.append("EMA20 아래 재하락 시도")
+            else:
+                cautions.append("아직 EMA20 위")
+            if fast_below:
+                reasons.append("EMA20/50 하락 우위")
+            if long_bias > short_bias + 1:
+                cautions.append("시장 보조지표는 숏에 불리")
+            stop = max(recent_high, pp) + buffer
+            signal = build_observation_signal(
+                "SHORT",
+                "P라인 관찰 숏",
+                level_from_rr(rr_for_signal("SHORT", last.close, stop, last.close - 50), len(reasons)),
+                last.close,
+                stop,
+                last.ts,
+                reasons,
+                cautions,
+                "OBSERVATION",
+            )
+            if signal is not None:
+                out.append(signal)
+
+    base_high = max(bar.high for bar in base)
+    base_low = min(bar.low for bar in base)
+    base_range = base_high - base_low
+    previous = bars[-18:-6]
+    previous_range = (max(bar.high for bar in previous) - min(bar.low for bar in previous)) if previous else 0
+    quiet_base = base_range <= max(atr_value * 1.50, previous_range * 0.55)
+    if quiet_base:
+        previous_high = max(bar.high for bar in previous)
+        previous_low = min(bar.low for bar in previous)
+        drop_into_base = previous_high - base_low
+        rise_into_base = base_high - previous_low
+
+        if drop_into_base >= atr_value and last.close >= base_low + base_range * 0.35:
+            reasons = ["라운딩 관찰 바닥", "하락 후 봉 축소/횡보", "저점 재이탈 여부 관찰"]
+            cautions = []
+            if last.close >= fast[-1] - atr_value * 0.20:
+                reasons.append("EMA20 회복 시도")
+            else:
+                cautions.append("EMA20 아래라 확인 필요")
+            stop = base_low - buffer
+            signal = build_observation_signal(
+                "LONG",
+                "라운딩 관찰 롱",
+                level_from_rr(rr_for_signal("LONG", last.close, stop, last.close + 50), len(reasons)),
+                last.close,
+                stop,
+                last.ts,
+                reasons,
+                cautions,
+                "OBSERVATION",
+            )
+            if signal is not None:
+                out.append(signal)
+
+        if rise_into_base >= atr_value and last.close <= base_high - base_range * 0.35:
+            reasons = ["라운딩 관찰 천장", "상승 후 봉 축소/횡보", "고점 재돌파 여부 관찰"]
+            cautions = []
+            if last.close <= fast[-1] + atr_value * 0.20:
+                reasons.append("EMA20 이탈 시도")
+            else:
+                cautions.append("EMA20 위라 확인 필요")
+            stop = base_high + buffer
+            signal = build_observation_signal(
+                "SHORT",
+                "라운딩 관찰 숏",
+                level_from_rr(rr_for_signal("SHORT", last.close, stop, last.close - 50), len(reasons)),
+                last.close,
+                stop,
+                last.ts,
+                reasons,
+                cautions,
+                "OBSERVATION",
+            )
+            if signal is not None:
+                out.append(signal)
+
+    deduped: dict[str, PaperSignal] = {}
+    for signal in out:
+        key = f"{signal.side}:{signal.setup_type}:{round(signal.entry / 10) * 10}"
+        existing = deduped.get(key)
+        if existing is None or (signal.rr or 0) > (existing.rr or 0):
+            deduped[key] = signal
+    return list(deduped.values())[:4]
+
+
 def public_indicator_signal(bars: list[bot.Bar], min_level: int) -> PaperSignal | None:
     if len(bars) < 80:
         return None
@@ -291,6 +512,8 @@ def update_open_trade(strategy: str, state: dict[str, Any], bars: list[bot.Bar])
 
 def candidate_filter_reason(signal: PaperSignal, trade_min_level: int, trade_min_rr: float) -> str:
     reasons: list[str] = []
+    if signal.observation_type:
+        reasons.append(f"{signal.observation_type.lower()} only")
     if signal.level < trade_min_level:
         reasons.append(f"level {signal.level} < {trade_min_level}")
     if signal.rr is not None and signal.rr < trade_min_rr:
@@ -443,7 +666,9 @@ def summary(strategy_state: dict[str, Any]) -> dict[str, Any]:
     pnl = sum(float(trade.get("pnl_points", 0.0)) for trade in trades)
     missed = sum(1 for candidate in candidates if candidate.get("candidate_result") == "MISSED_ENTRY")
     filtered_ok = sum(1 for candidate in candidates if candidate.get("candidate_result") == "FILTERED_OK")
+    ambiguous = sum(1 for candidate in candidates if candidate.get("candidate_result") == "AMBIGUOUS")
     candidate_open = sum(1 for candidate in candidates if not candidate.get("candidate_result"))
+    observation_count = sum(1 for candidate in candidates if candidate.get("observation_type") == "OBSERVATION")
     return {
         "trades": len(trades),
         "wins": wins,
@@ -453,6 +678,8 @@ def summary(strategy_state: dict[str, Any]) -> dict[str, Any]:
         "candidate_open": candidate_open,
         "missed_entries": missed,
         "filtered_ok": filtered_ok,
+        "ambiguous": ambiguous,
+        "observations": observation_count,
     }
 
 
@@ -472,18 +699,22 @@ def run_tick(state: dict[str, Any], symbol: str, interval: str, range_name: str,
             continue
         if name == "zukkumi_rules":
             signal = zukkumi_signal(symbol, bars, pivots, context, min_level=2, min_rr=min_rr)
-            observation = zukkumi_observation_candidate(symbol, bars, pivots, context, observe_min_rr=0.50)
+            observations = []
+            strict_observation = zukkumi_observation_candidate(symbol, bars, pivots, context, observe_min_rr=0.50)
+            if strict_observation is not None:
+                observations.append(strict_observation)
+            observations.extend(broad_zukkumi_observation_candidates(bars, pivots, context, min_rr=min_rr))
         else:
             signal = public_indicator_signal(bars, min_level=3)
-            observation = signal
+            observations = [signal] if signal is not None else []
         if signal is None:
-            if observation is not None:
+            for observation in observations:
                 open_candidate(
                     name,
                     strategy_state,
                     symbol,
                     observation,
-                    status="NO_TRADE_CANDIDATE",
+                    status="OBSERVATION_CANDIDATE" if observation.observation_type == "OBSERVATION" else "NO_TRADE_CANDIDATE",
                     filter_reason=candidate_filter_reason(observation, trade_min_level=2 if name == "zukkumi_rules" else 3, trade_min_rr=min_rr),
                 )
             continue

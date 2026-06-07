@@ -128,6 +128,7 @@ def build_properties(record: dict[str, Any]) -> dict[str, Any]:
         "Candidate Result": _select(record.get("candidate_result")),
         "Filter Reason": {"rich_text": _plain_text(record.get("filter_reason"))},
         "Review Summary": {"rich_text": _plain_text(record.get("review_summary"))},
+        "Observation Type": _select(record.get("observation_type")),
     }
     if event == "HEARTBEAT":
         properties.update(
@@ -136,10 +137,20 @@ def build_properties(record: dict[str, Any]) -> dict[str, Any]:
                 "Z Wins": _number(z_summary.get("wins")),
                 "Z Losses": _number(z_summary.get("losses")),
                 "Z PnL": _number(z_summary.get("pnl_points")),
+                "Z Candidate Open": _number(z_summary.get("candidate_open")),
+                "Z Missed Entries": _number(z_summary.get("missed_entries")),
+                "Z Filtered OK": _number(z_summary.get("filtered_ok")),
+                "Z Ambiguous": _number(z_summary.get("ambiguous")),
+                "Z Observations": _number(z_summary.get("observations")),
                 "P Trades": _number(p_summary.get("trades")),
                 "P Wins": _number(p_summary.get("wins")),
                 "P Losses": _number(p_summary.get("losses")),
                 "P PnL": _number(p_summary.get("pnl_points")),
+                "P Candidate Open": _number(p_summary.get("candidate_open")),
+                "P Missed Entries": _number(p_summary.get("missed_entries")),
+                "P Filtered OK": _number(p_summary.get("filtered_ok")),
+                "P Ambiguous": _number(p_summary.get("ambiguous")),
+                "P Observations": _number(p_summary.get("observations")),
             }
         )
     return properties

@@ -747,3 +747,28 @@
   - 감정/여론: Reddit/소셜미디어 감정 보고서
   - 데이터 소스: Tushare, AkShare, BaoStock, Yahoo Finance/yfinance, Finnhub 등
   - 의사결정 방식: 강세 분석가와 약세 분석가가 토론하고, 공격적/중립/보수 리스크 분석가가 다시 검토한 뒤 최종 매수/보유/매도 판단
+
+## 외부 참고 사례: MultiStrategy-Trader-Pro
+
+- 확인 시각: 2026-06-07 KST
+- GitHub: https://github.com/mahmoud20138/MultiStrategy-Trader-Pro
+- 성격: MetaTrader 5 기반 다전략 자동매매/대시보드 프로젝트. Gold, NAS100, US500, US30, BTC, ETH를 대상으로 여러 전략을 돌리고, 점수화, 리스크 관리, 백테스트, 거래 일지를 함께 다룬다.
+- 쭈꾸미에 바로 참고할 핵심:
+  - 단일 조건 진입이 아니라 `전략 신호 -> 점수화 -> 리스크 게이트 -> 기록` 순서로 처리한다.
+  - 모든 신호에 `score`, `quality_tier`, `score_breakdown`, `strategy_id`를 붙여 장기 검증이 가능하게 한다.
+  - 실제 진입뿐 아니라 막힌 신호도 왜 막혔는지 기록한다.
+  - 전략별, 날짜별, 방향별 성과를 따로 볼 수 있게 한다.
+- NAS100 전략:
+  - `ORB`: 뉴욕장 시작 후 첫 30분 고가/저가를 박스로 잡고 돌파 방향으로 진입. VWAP와 거래량 확인을 사용한다.
+  - `EMA Ribbon`: EMA 9/21/55 배열이 한 방향으로 정렬된 뒤 stochastic pullback cross가 나오면 진입한다.
+  - `ICT Power of 3`: 횡보 축적, 위/아래 훑기, BOS/FVG 확인 후 반대 방향 진입. 정의가 복잡하므로 쭈꾸미에서는 초기에는 관찰 후보로만 두는 편이 안전하다.
+  - `Gap Fill`: 장 시작 갭 크기에 따라 작은 갭은 메우기, 큰 갭은 추세 지속으로 본다.
+  - `20/50 EMA Pullback`: 일봉 EMA20/50 추세와 H4 트리거를 보는 스윙 전략이라 5분봉 모의매매에는 직접 진입보다 상위 추세 필터로 참고한다.
+- 쭈꾸미 적용 우선순위:
+  1. `score_total`과 `score_breakdown`을 모든 실제 진입/미진입 후보에 기록한다.
+  2. NY opening range, 즉 22:30~23:00 KST 박스의 돌파/실패/되돌림을 관찰 후보로 추가한다.
+  3. `public_indicator_rules`를 단순 지표식에서 `score_indicator_rules`로 개선한다.
+  4. 리스크 게이트는 실거래 전 단계에서만 강제하고, 현재 Render 모의매매에서는 우선 `blocked_reason`으로 남긴다.
+- 주의:
+  - 이 repo는 MT5/브로커/Windows 전제가 강해서 Render의 yfinance 기반 쭈꾸미에 그대로 붙이면 안 된다.
+  - 쭈꾸미에는 매매법 복사보다 `점수화/기록/검증 구조`를 가져오는 것이 맞다.

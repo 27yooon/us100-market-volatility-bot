@@ -1026,3 +1026,24 @@
   - 후보는 많은데 진입 0회: 필터가 너무 강한지 점검.
   - 점수 높은 후보가 계속 `MISSED_ENTRY`: 관찰 전략을 실제 모의매매로 승격 검토.
   - 점수 낮은 후보가 자주 수익: 점수 기준 재조정.
+
+## 오늘 매매 여부 확인 개선
+
+- 작업 시각: 2026-06-08 KST
+- 사용자 문제 제기: “진입 여부는 어디서 봐? 오늘 매매 했는지 안했는지 매번 너한테 물어봐야해?”
+- 결론:
+  - 매번 Codex에게 물어보는 구조는 불편하므로 Render 로그에서 바로 보이게 개선한다.
+- 코드 변경:
+  - 파일: `market_reason_mvp/render_dual_paper_worker.py`
+  - HEARTBEAT JSON에 `today_status`를 추가한다.
+  - HEARTBEAT마다 사람이 읽는 줄 `[TODAY_STATUS] YYYY-MM-DD 오늘 매매 없음/오늘 진입 N회 ...`을 추가 출력한다.
+- 새 문서:
+  - `TODAY_TRADE_STATUS.md`
+- 확인 위치:
+  - Render 로그: `https://dashboard.render.com/worker/srv-d8eomv6k1jcs73a6vro0/logs`
+  - 로그에서 `[TODAY_STATUS]`를 찾는다.
+- 의미:
+  - `오늘 매매 없음`: 오늘 실제 모의매매 진입 없음.
+  - `오늘 진입 N회`: 오늘 실제 모의매매 진입 있음.
+  - `보유 N건`: 아직 청산되지 않은 모의 포지션 있음.
+  - `손익 +Npt`: 오늘 청산 기준 손익.

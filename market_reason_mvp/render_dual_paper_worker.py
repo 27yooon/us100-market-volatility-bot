@@ -111,6 +111,8 @@ def append_event(record: dict[str, Any]) -> None:
     with JSONL_PATH.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
     print(json.dumps(record, ensure_ascii=False), flush=True)
+    if record.get("event") == "HEARTBEAT" and record.get("today_status"):
+        print(format_today_status_line(record["today_status"]), flush=True)
     if notion_trade_logger.enabled():
         notion_trade_logger.send(record)
 
@@ -1101,6 +1103,96 @@ def summary(strategy_state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def trade_date_text(trade: dict[str, Any], key: str) -> str:
+    text = str(trade.get(key) or "")
+    return text[:10] if len(text) >= 10 else ""
+
+
+def today_status(strategies: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    today = datetime.now(bot.KST).strftime("%Y-%m-%d")
+    per_strategy: dict[str, Any] = {}
+    total_entries = 0
+    total_closed = 0
+    total_open = 0
+    total_pnl = 0.0
+    latest: list[dict[str, Any]] = []
+
+    for name, strategy_state in strategies.items():
+        open_trade_data = strategy_state.get("open_trade")
+        open_today = bool(open_trade_data and trade_date_text(open_trade_data, "opened_at_text") == today)
+        today_closed = [
+            trade for trade in strategy_state.get("closed_trades", [])
+            if trade_date_text(trade, "opened_at_text") == today or trade_date_text(trade, "closed_at_text") == today
+        ]
+        closed_count = len(today_closed)
+        entries = closed_count + (1 if open_today else 0)
+        wins = sum(1 for trade in today_closed if trade.get("result") == "WIN")
+        losses = sum(1 for trade in today_closed if trade.get("result") == "LOSS")
+        pnl = sum(float(trade.get("pnl_points", 0.0)) for trade in today_closed)
+
+        total_entries += entries
+        total_closed += closed_count
+        total_open += 1 if open_today else 0
+        total_pnl += pnl
+        per_strategy[name] = {
+            "entries": entries,
+            "closed": closed_count,
+            "open": open_today,
+            "wins": wins,
+            "losses": losses,
+            "pnl_points": round(pnl, 2),
+        }
+
+        if open_today and open_trade_data:
+            latest.append({
+                "strategy": name,
+                "status": "OPEN",
+                "side": open_trade_data.get("side"),
+                "setup": open_trade_data.get("setup_type"),
+                "opened_at": open_trade_data.get("opened_at_text"),
+                "entry": open_trade_data.get("entry"),
+            })
+        for trade in today_closed[-3:]:
+            latest.append({
+                "strategy": name,
+                "status": trade.get("result"),
+                "side": trade.get("side"),
+                "setup": trade.get("setup_type"),
+                "opened_at": trade.get("opened_at_text"),
+                "closed_at": trade.get("closed_at_text"),
+                "pnl_points": trade.get("pnl_points"),
+            })
+
+    latest.sort(key=lambda item: str(item.get("closed_at") or item.get("opened_at") or ""), reverse=True)
+    label = "오늘 매매 없음"
+    if total_entries:
+        label = f"오늘 진입 {total_entries}회"
+        if total_open:
+            label += f", 보유 {total_open}건"
+        if total_closed:
+            label += f", 청산 {total_closed}건, 손익 {round(total_pnl, 2):+g}pt"
+
+    return {
+        "date": today,
+        "label": label,
+        "entries": total_entries,
+        "closed": total_closed,
+        "open": total_open,
+        "pnl_points": round(total_pnl, 2),
+        "strategies": per_strategy,
+        "latest": latest[:5],
+    }
+
+
+def format_today_status_line(status: dict[str, Any]) -> str:
+    strategy_parts = []
+    for name, data in status.get("strategies", {}).items():
+        strategy_parts.append(
+            f"{name} 진입 {data.get('entries', 0)} / 보유 {int(bool(data.get('open')))} / 손익 {float(data.get('pnl_points', 0.0)):+.1f}pt"
+        )
+    return f"[TODAY_STATUS] {status.get('date')} {status.get('label')} | " + " | ".join(strategy_parts)
+
+
 def run_tick(state: dict[str, Any], symbol: str, interval: str, range_name: str, min_rr: float) -> None:
     ensure_strategy_state(state)
     bars = bot.parse_bars(bot.fetch_chart(symbol, interval, range_name))
@@ -1161,6 +1253,7 @@ def run_tick(state: dict[str, Any], symbol: str, interval: str, range_name: str,
             "symbol": symbol,
             "price": bars[-1].close if bars else None,
             "strategy_versions": STRATEGY_VERSIONS,
+            "today_status": today_status(strategies),
             "summaries": {name: summary(strategy_state) for name, strategy_state in strategies.items()},
         }
     )

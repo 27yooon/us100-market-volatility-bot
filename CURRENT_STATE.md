@@ -1047,3 +1047,28 @@
   - `오늘 진입 N회`: 오늘 실제 모의매매 진입 있음.
   - `보유 N건`: 아직 청산되지 않은 모의 포지션 있음.
   - `손익 +Npt`: 오늘 청산 기준 손익.
+
+## 텔레그램/노션 알림 운영 반영
+
+- 작업 시각: 2026-06-08 KST
+- 사용자 요청: “거래마다 텔레그램 보내고, 밤 11시에 오늘 거래 총 보고, 노션에도 그대로 기록”
+- 반영 파일:
+  - `market_reason_mvp/render_dual_paper_worker.py`
+  - `market_reason_mvp/notion_trade_logger.py`
+  - `NOTIFICATION_RUNBOOK.md`
+- Telegram:
+  - `OPEN`, `CLOSE` 발생 시 즉시 알림.
+  - 대상 전략: `쭈꾸미 원본`, `기본지표`, `오픈박스 매매`.
+  - `점수제 관찰`은 실제 진입이 아니므로 즉시 알림 제외.
+  - 23:00 KST 중간 보고.
+  - 06:10 KST 전날 밤 미국장 최종 보고.
+  - 필요 env: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
+  - 선택 env: `TELEGRAM_PAPER_NOTIFY=false`면 알림 중지.
+- Notion:
+  - 기존 프로젝트 Notion API/env 방식만 사용.
+  - `DAILY_REPORT`도 Notion 기록 대상에 포함.
+  - 필요 env: `NOTION_API_TOKEN`, `NOTION_DATABASE_ID`.
+- 중복 방지:
+  - 상태 파일 `daily_reports_sent`에 보낸 보고 키를 저장해 같은 날 같은 보고가 중복 발송되지 않게 한다.
+- 주의:
+  - 모든 알림은 실거래가 아니라 Render 모의매매 기준이다.

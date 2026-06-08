@@ -71,9 +71,32 @@ def _join_list(value: Any) -> str:
     return "" if value is None else str(value)
 
 
+def _daily_report_summary(record: dict[str, Any]) -> str:
+    if record.get("event") != "DAILY_REPORT":
+        return ""
+    totals = record.get("totals") or {}
+    lines = [
+        f"{record.get('report_title', '일일 보고')} / {record.get('report_date', '')}",
+        f"총 진입 {int(totals.get('entries', 0))}회, 보유 {int(totals.get('open', 0))}건, 청산 {int(totals.get('closed', 0))}건",
+        f"승패 {int(totals.get('wins', 0))}승 {int(totals.get('losses', 0))}패, 손익 {float(totals.get('pnl_points', 0.0)):+.2f}pt",
+    ]
+    for name, row in (record.get("strategies") or {}).items():
+        if row.get("mode") == "watch_only":
+            lines.append(f"{name}: 관찰 후보 {int(row.get('candidates', 0))}건")
+        else:
+            lines.append(
+                f"{name}: 진입 {int(row.get('entries', 0))}회, "
+                f"{int(row.get('wins', 0))}승 {int(row.get('losses', 0))}패, "
+                f"{float(row.get('pnl_points', 0.0)):+.1f}pt"
+            )
+    return "\n".join(lines)
+
+
 def _event_title(record: dict[str, Any]) -> str:
     event = record.get("event", "-")
     strategy = record.get("strategy", "render")
+    if event == "DAILY_REPORT":
+        return f"{record.get('report_date', '')} {record.get('report_title', '일일 보고')}".strip()
     side = record.get("side", "-")
     result = record.get("result") or record.get("candidate_result") or ""
     ts = record.get("opened_at_text") or record.get("closed_at_text") or record.get("logged_at") or ""
@@ -97,9 +120,12 @@ def build_properties(record: dict[str, Any]) -> dict[str, Any]:
     closed_at = record.get("closed_at_text")
     date_source = closed_at or opened_at or record.get("logged_at")
     date_text = str(date_source)[:10] if date_source else ""
+    totals = record.get("totals") or {}
     pnl = record.get("pnl_points")
     if event == "HEARTBEAT" and strategy == "render":
         pnl = z_summary.get("pnl_points")
+    if event == "DAILY_REPORT":
+        pnl = totals.get("pnl_points")
 
     properties: dict[str, Any] = {
         "Name": {"title": _title(_event_title(record))},
@@ -111,7 +137,7 @@ def build_properties(record: dict[str, Any]) -> dict[str, Any]:
         "Event": _select(event),
         "Symbol": _select(record.get("symbol")),
         "Side": _select(record.get("side") or "-"),
-        "Setup": {"rich_text": _plain_text(record.get("setup_type") or record.get("mode") or "상태 확인")},
+        "Setup": {"rich_text": _plain_text(record.get("setup_type") or record.get("report_title") or record.get("mode") or "상태 확인")},
         "Level": _number(record.get("level")),
         "Entry": _number(record.get("entry")),
         "Stop": _number(record.get("stop")),
@@ -127,7 +153,7 @@ def build_properties(record: dict[str, Any]) -> dict[str, Any]:
         "Candidate Status": _select(record.get("candidate_status")),
         "Candidate Result": _select(record.get("candidate_result")),
         "Filter Reason": {"rich_text": _plain_text(record.get("filter_reason"))},
-        "Review Summary": {"rich_text": _plain_text(record.get("review_summary"))},
+        "Review Summary": {"rich_text": _plain_text(record.get("review_summary") or _daily_report_summary(record))},
         "Observation Type": _select(record.get("observation_type")),
     }
     if event == "HEARTBEAT":

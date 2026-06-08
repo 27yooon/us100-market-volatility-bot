@@ -2,7 +2,7 @@
 """
 Run two paper-trading strategies continuously for Render Background Worker.
 
-No Telegram messages are sent and no real orders are placed.
+No real orders are placed. Telegram notifications are optional and use Render env vars.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import time
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
@@ -30,6 +31,8 @@ STRATEGY_VERSIONS = {
     "orb_paper": "orb_paper_v1",
     "score_watch": "score_watch_v1",
 }
+
+PAPER_TRADE_STRATEGIES = {"zukkumi_original", "indicator_basic", "orb_paper"}
 
 LEGACY_STRATEGY_NAMES = {
     "zukkumi_rules": "zukkumi_original",
@@ -91,6 +94,19 @@ def ny_session_date(unix_ts: int) -> datetime.date:
     return local.date()
 
 
+def kst_date_from_text(value: Any) -> str:
+    text = str(value or "")
+    return text[:10] if len(text) >= 10 else ""
+
+
+def session_date_from_trade(trade: dict[str, Any]) -> str:
+    ts = trade.get("opened_at") or trade.get("closed_at")
+    if isinstance(ts, (int, float)):
+        return ny_session_date(int(ts)).isoformat()
+    opened = kst_date_from_text(trade.get("opened_at_text"))
+    return opened
+
+
 def strategy_version(strategy: str) -> str:
     return STRATEGY_VERSIONS.get(strategy, strategy)
 
@@ -105,6 +121,57 @@ def quality_tier(score: int | None) -> str | None:
     return "LOW"
 
 
+def strategy_display_name(name: str | None) -> str:
+    return {
+        "zukkumi_original": "쭈꾸미 원본",
+        "indicator_basic": "기본지표",
+        "orb_paper": "오픈박스 매매",
+        "score_watch": "점수제 관찰",
+    }.get(str(name), str(name or "-"))
+
+
+def short_reasons(record: dict[str, Any], limit: int = 3) -> str:
+    reasons = record.get("reasons") or []
+    if not isinstance(reasons, list):
+        return str(reasons)[:300]
+    return " / ".join(str(reason) for reason in reasons[:limit]) or "-"
+
+
+def format_trade_telegram(record: dict[str, Any]) -> str:
+    strategy = strategy_display_name(record.get("strategy"))
+    event = record.get("event")
+    if event == "OPEN":
+        return "\n".join(
+            [
+                "[쭈꾸미 모의매매 진입]",
+                f"전략: {strategy}",
+                f"방향: {record.get('side')}",
+                f"셋업: {record.get('setup_type')}",
+                f"진입가: {float(record.get('entry', 0.0)):.2f}",
+                f"목표가: {float(record.get('target', 0.0)):.2f}",
+                f"무효/손절: {float(record.get('stop', 0.0)):.2f}",
+                f"RR: {float(record.get('rr') or 0.0):.2f}",
+                f"근거: {short_reasons(record)}",
+                f"시각: {record.get('opened_at_text') or record.get('logged_at')}",
+                "실거래 아님. Render 모의매매 기록.",
+            ]
+        )
+    return "\n".join(
+        [
+            "[쭈꾸미 모의매매 청산]",
+            f"전략: {strategy}",
+            f"방향: {record.get('side')}",
+            f"결과: {record.get('result')}",
+            f"진입가: {float(record.get('entry', 0.0)):.2f}",
+            f"청산가: {float(record.get('exit_price', 0.0)):.2f}",
+            f"손익: {float(record.get('pnl_points', 0.0)):+.2f}pt",
+            f"사유: {record.get('close_reason') or '-'}",
+            f"진입: {record.get('opened_at_text')}",
+            f"청산: {record.get('closed_at_text')}",
+        ]
+    )
+
+
 def append_event(record: dict[str, Any]) -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     record = {"logged_at": now_text(), **record}
@@ -113,8 +180,38 @@ def append_event(record: dict[str, Any]) -> None:
     print(json.dumps(record, ensure_ascii=False), flush=True)
     if record.get("event") == "HEARTBEAT" and record.get("today_status"):
         print(format_today_status_line(record["today_status"]), flush=True)
+    send_telegram_for_event(record)
     if notion_trade_logger.enabled():
         notion_trade_logger.send(record)
+
+
+def telegram_enabled() -> bool:
+    if str_bool_env("TELEGRAM_PAPER_NOTIFY", default=True) is False:
+        return False
+    return bool(os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID"))
+
+
+def str_bool_env(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def send_telegram_for_event(record: dict[str, Any]) -> None:
+    event = record.get("event")
+    text: str | None = None
+    if event in {"OPEN", "CLOSE"} and record.get("strategy") in PAPER_TRADE_STRATEGIES:
+        text = format_trade_telegram(record)
+    elif event == "DAILY_REPORT":
+        text = format_daily_report_telegram(record)
+    if not text:
+        return
+    if not telegram_enabled():
+        print("telegram_skipped: not_configured_or_disabled", flush=True)
+        return
+    ok, detail = bot.send_telegram_message(text)
+    print(f"telegram_{event.lower()}={'ok' if ok else 'failed'}: {detail[:300]}", flush=True)
 
 
 def initial_strategy_state(name: str | None = None) -> dict[str, Any]:
@@ -1193,6 +1290,172 @@ def format_today_status_line(status: dict[str, Any]) -> str:
     return f"[TODAY_STATUS] {status.get('date')} {status.get('label')} | " + " | ".join(strategy_parts)
 
 
+def report_due(now: datetime, report_type: str) -> bool:
+    minutes = now.hour * 60 + now.minute
+    if report_type == "MID_2300":
+        return 23 * 60 <= minutes < 24 * 60
+    if report_type == "FINAL_0610":
+        return 6 * 60 + 10 <= minutes < 12 * 60
+    return False
+
+
+def report_date(now: datetime, report_type: str) -> str:
+    if report_type == "FINAL_0610":
+        return (now - timedelta(days=1)).date().isoformat()
+    return now.date().isoformat()
+
+
+def build_daily_report(
+    strategies: dict[str, dict[str, Any]],
+    report_type: str,
+    report_date_text: str,
+    symbol: str,
+    price: float | None,
+) -> dict[str, Any]:
+    strategy_rows: dict[str, Any] = {}
+    latest: list[dict[str, Any]] = []
+    totals = {"entries": 0, "closed": 0, "open": 0, "wins": 0, "losses": 0, "pnl_points": 0.0}
+
+    for name, strategy_state in strategies.items():
+        if name == "score_watch":
+            candidates = [
+                candidate for candidate in strategy_state.get("watch_candidates", [])
+                if trade_date_text(candidate, "observed_at_text") == report_date_text
+            ]
+            strategy_rows[name] = {
+                "mode": "watch_only",
+                "candidates": len(candidates),
+                "missed_entries": sum(1 for candidate in candidates if candidate.get("candidate_result") == "MISSED_ENTRY"),
+                "filtered_ok": sum(1 for candidate in candidates if candidate.get("candidate_result") == "FILTERED_OK"),
+                "ambiguous": sum(1 for candidate in candidates if candidate.get("candidate_result") == "AMBIGUOUS"),
+            }
+            continue
+
+        open_trade_data = strategy_state.get("open_trade")
+        open_in_session = bool(open_trade_data and session_date_from_trade(open_trade_data) == report_date_text)
+        closed = [
+            trade for trade in strategy_state.get("closed_trades", [])
+            if session_date_from_trade(trade) == report_date_text
+        ]
+        candidates = [
+            candidate for candidate in strategy_state.get("watch_candidates", [])
+            if trade_date_text(candidate, "observed_at_text") == report_date_text
+        ]
+        wins = sum(1 for trade in closed if trade.get("result") == "WIN")
+        losses = sum(1 for trade in closed if trade.get("result") == "LOSS")
+        pnl = sum(float(trade.get("pnl_points", 0.0)) for trade in closed)
+        entries = len(closed) + (1 if open_in_session else 0)
+        row = {
+            "mode": "paper_trade",
+            "entries": entries,
+            "closed": len(closed),
+            "open": open_in_session,
+            "wins": wins,
+            "losses": losses,
+            "pnl_points": round(pnl, 2),
+            "candidate_open": sum(1 for candidate in candidates if not candidate.get("candidate_result")),
+            "missed_entries": sum(1 for candidate in candidates if candidate.get("candidate_result") == "MISSED_ENTRY"),
+            "filtered_ok": sum(1 for candidate in candidates if candidate.get("candidate_result") == "FILTERED_OK"),
+            "ambiguous": sum(1 for candidate in candidates if candidate.get("candidate_result") == "AMBIGUOUS"),
+        }
+        strategy_rows[name] = row
+        totals["entries"] += entries
+        totals["closed"] += len(closed)
+        totals["open"] += 1 if open_in_session else 0
+        totals["wins"] += wins
+        totals["losses"] += losses
+        totals["pnl_points"] += pnl
+
+        if open_in_session and open_trade_data:
+            latest.append({
+                "strategy": name,
+                "status": "OPEN",
+                "side": open_trade_data.get("side"),
+                "setup": open_trade_data.get("setup_type"),
+                "opened_at": open_trade_data.get("opened_at_text"),
+                "entry": open_trade_data.get("entry"),
+            })
+        for trade in closed[-5:]:
+            latest.append({
+                "strategy": name,
+                "status": trade.get("result"),
+                "side": trade.get("side"),
+                "setup": trade.get("setup_type"),
+                "opened_at": trade.get("opened_at_text"),
+                "closed_at": trade.get("closed_at_text"),
+                "pnl_points": trade.get("pnl_points"),
+            })
+
+    totals["pnl_points"] = round(float(totals["pnl_points"]), 2)
+    latest.sort(key=lambda item: str(item.get("closed_at") or item.get("opened_at") or ""), reverse=True)
+    title = "23시 중간 보고" if report_type == "MID_2300" else "미국장 마감 최종 보고"
+    return {
+        "event": "DAILY_REPORT",
+        "report_type": report_type,
+        "report_title": title,
+        "report_date": report_date_text,
+        "symbol": symbol,
+        "price": price,
+        "totals": totals,
+        "strategies": strategy_rows,
+        "latest": latest[:8],
+    }
+
+
+def format_daily_report_telegram(record: dict[str, Any]) -> str:
+    totals = record.get("totals") or {}
+    lines = [
+        f"[쭈꾸미 {record.get('report_title')}]",
+        f"기준일: {record.get('report_date')}",
+        f"종목: {record.get('symbol')} / 현재가: {record.get('price')}",
+        "",
+        f"총 진입: {int(totals.get('entries', 0))}회",
+        f"보유: {int(totals.get('open', 0))}건 / 청산: {int(totals.get('closed', 0))}건",
+        f"승패: {int(totals.get('wins', 0))}승 {int(totals.get('losses', 0))}패",
+        f"손익: {float(totals.get('pnl_points', 0.0)):+.2f}pt",
+        "",
+        "전략별:",
+    ]
+    for name, row in (record.get("strategies") or {}).items():
+        display = strategy_display_name(name)
+        if row.get("mode") == "watch_only":
+            lines.append(
+                f"- {display}: 관찰 후보 {int(row.get('candidates', 0))}건, 놓친 {int(row.get('missed_entries', 0))}, 통과필터 {int(row.get('filtered_ok', 0))}"
+            )
+        else:
+            lines.append(
+                f"- {display}: 진입 {int(row.get('entries', 0))}, 보유 {int(bool(row.get('open')))}, "
+                f"{int(row.get('wins', 0))}승 {int(row.get('losses', 0))}패, {float(row.get('pnl_points', 0.0)):+.1f}pt"
+            )
+    latest = record.get("latest") or []
+    if latest:
+        lines.extend(["", "최근 거래:"])
+        for item in latest[:5]:
+            lines.append(
+                f"- {strategy_display_name(item.get('strategy'))} {item.get('side')} {item.get('status')} "
+                f"{float(item.get('pnl_points') or 0.0):+.1f}pt {item.get('setup') or ''}"
+            )
+    lines.append("")
+    lines.append("실거래 아님. Render 모의매매 보고.")
+    return "\n".join(lines)
+
+
+def maybe_send_daily_reports(state: dict[str, Any], symbol: str, price: float | None) -> None:
+    now = datetime.now(bot.KST)
+    sent = state.setdefault("daily_reports_sent", [])
+    for report_type in ("MID_2300", "FINAL_0610"):
+        if not report_due(now, report_type):
+            continue
+        date_text = report_date(now, report_type)
+        key = f"{report_type}:{date_text}"
+        if key in sent:
+            continue
+        report = build_daily_report(state["strategies"], report_type, date_text, symbol, price)
+        append_event(report)
+        sent.append(key)
+    state["daily_reports_sent"] = sent[-60:]
+
+
 def run_tick(state: dict[str, Any], symbol: str, interval: str, range_name: str, min_rr: float) -> None:
     ensure_strategy_state(state)
     bars = bot.parse_bars(bot.fetch_chart(symbol, interval, range_name))
@@ -1247,11 +1510,13 @@ def run_tick(state: dict[str, Any], symbol: str, interval: str, range_name: str,
             continue
         open_trade(name, strategy_state, symbol, signal)
 
+    price = bars[-1].close if bars else None
+    maybe_send_daily_reports(state, symbol, price)
     append_event(
         {
             "event": "HEARTBEAT",
             "symbol": symbol,
-            "price": bars[-1].close if bars else None,
+            "price": price,
             "strategy_versions": STRATEGY_VERSIONS,
             "today_status": today_status(strategies),
             "summaries": {name: summary(strategy_state) for name, strategy_state in strategies.items()},
@@ -1278,7 +1543,7 @@ def main() -> int:
             "mode": "render_dual_paper",
             "symbol": args.symbol,
             "poll": args.poll,
-            "telegram": "disabled",
+            "telegram": "enabled_if_env_present",
             "strategy_versions": STRATEGY_VERSIONS,
         }
     )

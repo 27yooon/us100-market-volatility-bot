@@ -154,6 +154,8 @@
   - 동작:
     - Render 환경변수 `NOTION_API_TOKEN`, `NOTION_DATABASE_ID`가 있으면 START/HEARTBEAT/OPEN/CLOSE/ERROR를 Notion DB에 자동 추가한다.
     - 환경변수가 없으면 기존처럼 Render 로그만 남긴다.
+  - 검증:
+    - `python3 -m py_compile market_reason_mvp/notion_trade_logger.py market_reason_mvp/render_dual_paper_worker.py` 통과.
   - 아직 하지 않은 것:
     - 사용자 Notion에 실제 Database 생성
     - Render 환경변수 2개 설정
@@ -247,8 +249,8 @@
   - 비용 발생 서비스: `us100-dual-paper-worker`
   - Cron Jobs 비용: 화면상 `0.00`
   - 참고: 이는 Render 대시보드에 표시된 month-to-date 미청구 금액이며, 최종 청구 시점에는 실행 시간이 늘면 증가할 수 있다.
-	- 2026-06-02 09:05 KST heartbeat 확인:
-	  - Render 서비스: `us100-dual-paper-worker`
+- 2026-06-02 09:05 KST heartbeat 확인:
+  - Render 서비스: `us100-dual-paper-worker`
   - URL: `https://dashboard.render.com/worker/srv-d8eomv6k1jcs73a6vro0/logs`
   - 상태: 실행 중, 최신 HEARTBEAT 확인.
   - 최신 로그: `2026-06-02 09:05:36 KST HEARTBEAT`
@@ -256,8 +258,53 @@
   - `zukkumi_rules`: trades 1, wins 1, losses 0, pnl_points +50.0, open false
   - `public_indicator_rules`: trades 0, wins 0, losses 0, pnl_points 0, open false
   - 로컬 맥 보조 감시: screen 없음, `paper_signal_runner/caffeinate` 프로세스 없음.
-	  - 현재 기준 운영은 Render이며, 로컬 맥 감시는 꺼져 있는 것이 정상.
-	  - Notion 기록: 사용자 Notion API 연결 전까지 자동기록 보류. Codex/ChatGPT 노션 커넥터 사용 금지.
+  - 현재 기준 운영은 Render이며, 로컬 맥 감시는 꺼져 있는 것이 정상.
+  - Notion 기록: 사용자 Notion API 연결 전까지 자동기록 보류. Codex/ChatGPT 노션 커넥터 사용 금지.
+- 2026-06-02 09:20 KST heartbeat 확인:
+  - Render 상태: 실행 중, 최신 HEARTBEAT 확인.
+  - 최신 로그: `2026-06-02 09:20:38 KST HEARTBEAT`
+  - 가격: `NQ=F 30426.5`
+  - `zukkumi_rules`: trades 1, wins 1, losses 0, pnl_points +50.0, open false
+  - `public_indicator_rules`: trades 0, wins 0, losses 0, pnl_points 0, open false
+  - 로컬 맥 보조 감시: screen 없음, `paper_signal_runner/caffeinate` 프로세스 없음.
+  - 이전 확인 대비 새 매매 없음. Notion 기록은 사용자 Notion API 연결 전까지 보류.
+- 2026-06-02 15:46 KST heartbeat 확인:
+  - Render 상태: 실행 중, 최신 HEARTBEAT 확인.
+  - 최신 로그: `2026-06-02 15:46:29 KST HEARTBEAT`
+  - 가격: `NQ=F 30501.0`
+  - `zukkumi_rules`: trades 1, wins 1, losses 0, pnl_points +50.0, open false
+  - `public_indicator_rules`: trades 0, wins 0, losses 0, pnl_points 0, open false
+  - 로컬 맥 보조 감시: screen 없음, `paper_signal_runner/caffeinate` 프로세스 없음.
+  - 이전 확인 대비 새 매매 없음. Notion 기록은 사용자 Notion API 연결 전까지 보류.
+- 2026-06-05 17:11 KST heartbeat 확인:
+  - Render 상태: 실행 중, 최신 HEARTBEAT 확인.
+  - 최신 로그: `2026-06-05 17:11:31 KST HEARTBEAT`
+  - 가격: `NQ=F 30149.0`
+  - `zukkumi_rules`: trades 4, wins 2, losses 2, pnl_points +36.25, open false
+  - `public_indicator_rules`: trades 1, wins 1, losses 0, pnl_points +50.0, open false
+  - 로컬 맥 보조 감시: screen 없음, `paper_signal_runner/caffeinate` 프로세스 없음.
+  - 이전 2026-06-02 확인 대비 새 매매가 발생했다.
+  - Render 24시간 화면에서 `OPEN/CLOSE` 상세 원문 검색은 잡히지 않았다. 상세 진입/청산 시간과 방향은 별도 로그 접근 또는 코드 보강 필요.
+  - Notion 기록은 사용자 Notion API 연결 전까지 자동기록 보류. Codex/ChatGPT Notion 커넥터 사용 금지.
+- 2026-06-05 23:12 KST heartbeat 확인:
+  - Render 상태: 실행 중, 최신 HEARTBEAT 확인.
+  - 최신 로그: `2026-06-05 23:12:18 KST HEARTBEAT`
+  - 가격: `NQ=F 29799.75`
+  - `zukkumi_rules`: trades 4, wins 2, losses 2, pnl_points +36.25, open false
+  - `public_indicator_rules`: trades 1, wins 1, losses 0, pnl_points +50.0, open false
+  - 로컬 맥 보조 감시: screen 없음, `paper_signal_runner/caffeinate` 프로세스 없음.
+  - 이전 확인 대비 새 매매 없음.
+  - Notion 기록은 사용자 Notion API 연결 전까지 자동기록 보류.
+- 2026-06-05 상세 OPEN/CLOSE 재확인:
+  - Render 로그 기간을 7일로 넓혀 `OPEN/CLOSE` 상세 원문을 확인했다.
+  - `zukkumi_rules` 거래 4회:
+    1. LONG, `P라인 반등 롱 확인`, opened_at `2026-06-01 23:54:25 KST`, entry `30432.25`, target `30482.25`, result WIN `+50.0`, closed_at `2026-06-02 00:20:00 KST`
+    2. LONG, `P라인 반등 롱 확인`, opened_at `2026-06-02 16:06:31 KST`, entry `30537.25`, stop `30506.91`, result LOSS `-30.5`, closed_at `2026-06-02 20:00:00 KST`
+    3. LONG, `P라인 반등 롱 확인`, opened_at `2026-06-02 20:47:04 KST`, entry `30548.5`, stop `30520.37`, result LOSS `-33.25`, closed_at `2026-06-02 22:05:00 KST`
+    4. LONG, `P라인 반등 롱 확인`, opened_at `2026-06-04 02:46:11 KST`, entry `30614.75`, target `30664.75`, result WIN `+50.0`, closed_at `2026-06-04 03:25:00 KST`
+	  - `public_indicator_rules` 거래 1회:
+	    1. LONG, `공개기술지표 반등 롱`, opened_at `2026-06-04 14:17:42 KST`, entry `30481.5`, target `30531.5`, result WIN `+50.0`, closed_at `2026-06-04 15:50:00 KST`
+	  - 현재까지 확인된 모든 거래는 `LONG`이었다.
 	- 2026-06-06 왜 LONG만 들어갔는지 코드 기준 분석:
 	  - Render 모의매매 엔진 자체는 LONG/SHORT 둘 다 처리한다. SHORT이면 목표가는 `entry - 50`, 손절은 `5분봉 종가가 stop 위로 마감` 기준으로 처리된다.
 	  - `public_indicator_rules`에도 SHORT 조건은 있다. 조건은 Bollinger 상단 터치, EMA20 이탈, RSI14 > 52, EMA20 <= EMA50, 손익비 통과다.
@@ -688,6 +735,16 @@
   - 가격: `NQ=F 30338.0`
   - `zukkumi_rules`: trades 0, wins 0, losses 0, pnl 0, open false
   - `public_indicator_rules`: trades 0, wins 0, losses 0, pnl 0, open false
+- 안정화 변경:
+  - 2026-06-01 22:44 KST Render Start Command에서 `--reset` 제거
+  - 현재 실행 명령:
+    - `python market_reason_mvp/render_dual_paper_worker.py --symbol=NQ=F --poll=300`
+  - 최신 확인:
+    - `2026-06-01 22:44:16 KST START`
+    - `2026-06-01 22:44:17 KST HEARTBEAT`
+    - 가격: `NQ=F 30410.25`
+    - `zukkumi_rules`: trades 0, wins 0, losses 0, pnl 0, open false
+    - `public_indicator_rules`: trades 0, wins 0, losses 0, pnl 0, open false
 - 텔레그램:
   - 사용 안 함
 - 후속 체크:
@@ -698,6 +755,9 @@
 
 - 시작: 2026-06-01 21:14 KST
 - 실행 위치: 이 맥 로컬
+- 현재 상태: 중지함
+- 중지 시각: 2026-06-01 22:45 KST 전후
+- 중지 이유: Render Background Worker가 정상 실행되어 노트북 없이 감시하는 방식으로 전환
 - screen 세션: `zzukkumi_paper`
 - 명령:
   - `caffeinate -dimsu python3 -u market_reason_mvp/paper_signal_runner.py --reset --continuous --poll 60`
@@ -719,10 +779,8 @@
   - Codex heartbeat `쭈꾸미 24시간 감시 상태 확인`
   - 2026-06-06 06:00 KST까지 약 6시간마다 상태 확인
 - 주의:
-  - 이 실행은 맥 로컬 실행이다.
-  - Render 24시간 실행은 아직 켜지 않았다.
-  - 노트북을 완전히 끄거나 재부팅하면 중단된다.
-  - 종료가 필요하면 `screen -S zzukkumi_paper -X quit`로 끈다.
+  - 이 섹션은 과거 로컬 임시 감시 기록이다.
+  - 현재 실제 감시는 Render `us100-dual-paper-worker`가 담당한다.
 
 ## 외부 참고 사례: TradingAgents-CN
 
@@ -934,3 +992,20 @@
   - 사용자는 계속 이 메인 방에 말하면 된다.
   - Codex가 필요할 때만 담당 방 성격으로 작업을 나눠 정리한다.
   - 스레드 자동 생성 도구가 없으면 `TEAM_ROOMS.md`의 지시문을 복사해 새 방에 붙여넣는 방식으로 운영한다.
+
+## 앱 전환 계획 반영
+
+- 작업 시각: 2026-06-08 KST
+- 사용자 요청: “만약 승률 80프로 이상 나오면 어플로 구상할 때 필요한 점을 다 반영”
+- 새 문서:
+  - `APP_PRODUCT_PLAN.md`
+- 핵심 내용:
+  - 앱 전환 조건: 전략별 실제 모의매매 30회 이상, 후보 50건 이상, 최소 2~4주 검증, 승률 80% 이상, Profit Factor/Max Drawdown/연속 손실 확인.
+  - 앱 화면: 운영 대시보드, 전략별 화면, 거래 복기 화면, 후보/미진입 화면, 리스크 관리 화면, 알림 화면.
+  - 데이터 구조: strategies, strategy_versions, signals, paper_trades, missed_candidates, daily_summaries, risk_events, server_heartbeats, reviews.
+  - 안전장치: 하루/주간 손실 제한, 연속 손실 정지, 과변동/뉴스/데이터 오류/heartbeat 지연 시 진입 금지.
+  - 전환 단계: Render 모의매매 -> 자동 리포트 -> 웹 대시보드 MVP -> 모바일 대응 -> 알림 앱 -> 소액 실거래 검토 -> 완전 자동화 검토.
+- 중요한 원칙:
+  - 승률만 보고 앱/실거래로 넘어가지 않는다.
+  - 전략 버전별 결과를 섞지 않는다.
+  - 앱의 핵심은 진입 버튼이 아니라 검증, 복기, 리스크 제어, 운영 감시다.

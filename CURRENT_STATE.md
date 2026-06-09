@@ -1164,3 +1164,18 @@
   - 대상 Notion Database ID를 `NOTION_DATABASE_ID`로 추가한다.
   - 해당 Notion Database를 사용자 Notion integration에 공유해야 한다.
   - Render 재배포 후 `DAILY_REPORT` 또는 다음 `OPEN/CLOSE`부터 Notion에 기록되는지 확인한다.
+
+## Notion 수동 기록 테스트
+
+- 작업 시각: 2026-06-09 KST
+- 사용자 요청: “지금 너가 노션에 하나 기록해봐”
+- 사용 방식:
+  - Codex/ChatGPT Notion 커넥터는 사용하지 않았다.
+  - Chrome 사용자 로그인 세션으로 사용자가 만든 Notion DB를 직접 열었다.
+  - 대상 URL: `https://app.notion.com/p/376f601875438194affcfc8613fc71a3?v=376f6018754381a0bd33000ce1db594d`
+- 결과:
+  - Notion `매매일지` DB에 새 행 `2026-06-08 21:22 LONG`을 생성했다.
+  - 해당 행은 2026-06-08 두 번째 실제 모의매매 WIN 거래를 표시하기 위한 수동 테스트 기록이다.
+- 주의:
+  - Notion 표 UI에서 셀 포커스가 불안정해 전체 컬럼 자동입력은 중단했다.
+  - 장기 자동기록은 Chrome 수동 조작이 아니라 Render 환경변수 `NOTION_API_TOKEN`, `NOTION_DATABASE_ID`를 통한 API 기록으로 해야 한다.

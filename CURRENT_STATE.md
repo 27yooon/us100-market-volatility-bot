@@ -1179,3 +1179,23 @@
 - 주의:
   - Notion 표 UI에서 셀 포커스가 불안정해 전체 컬럼 자동입력은 중단했다.
   - 장기 자동기록은 Chrome 수동 조작이 아니라 Render 환경변수 `NOTION_API_TOKEN`, `NOTION_DATABASE_ID`를 통한 API 기록으로 해야 한다.
+
+## Render Telegram 환경변수 반영
+
+- 작업 시각: 2026-06-09 KST
+- 사용자 요청: “아니 어차피 너한테 다 맡기는데 너가 해줘”
+- 조치:
+  - 로컬 `/Users/yooon/Desktop/쭈꾸미/autotrade_mvp/.env`에서 `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` 값을 읽었다.
+  - 값은 채팅/로그/CURRENT_STATE에 노출하지 않았다.
+  - Render 서비스 `us100-dual-paper-worker` Environment에 아래 변수명을 추가했다.
+    - `TELEGRAM_BOT_TOKEN`
+    - `TELEGRAM_CHAT_ID`
+  - `Save, rebuild, and deploy`를 실행했다.
+- 확인:
+  - Render 환경변수 화면에서 두 변수명이 표시되고 값은 secret masking 처리됨.
+  - 2026-06-09 12:13:26 KST 새 `START` 로그 확인.
+  - 새 START 로그의 telegram 상태: `enabled_if_env_present`
+  - 최근 1시간 `telegram_skipped` 검색 결과 없음.
+- 남은 확인:
+  - 다음 실제 `OPEN`, `CLOSE`, `DAILY_REPORT` 발생 시 텔레그램 수신 여부를 확인한다.
+  - 테스트 알림을 즉시 보내려면 별도 테스트 이벤트/스크립트가 필요하다.

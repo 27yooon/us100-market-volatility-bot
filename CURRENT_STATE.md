@@ -1140,3 +1140,27 @@
 - 다음 조치:
   - Render Environment에서 `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`가 있는지 확인한다.
   - `TELEGRAM_PAPER_NOTIFY=false`가 있으면 제거하거나 `true`로 바꾼다.
+
+## 2026-06-08 Notion 미기록 원인 확인
+
+- 확인 시각: 2026-06-09 KST
+- 사용자 질문: “왜 노션엔 기록 없는지”
+- 확인 방식:
+  - Codex/ChatGPT Notion 커넥터는 사용하지 않았다.
+  - Render 로그와 Render Environment 화면만 확인했다.
+- 코드 조건:
+  - Notion 기록은 `NOTION_API_TOKEN`과 `NOTION_DATABASE_ID`가 둘 다 있을 때만 실행된다.
+  - 둘 중 하나라도 없으면 `notion_trade_logger.enabled()`가 false라서 조용히 건너뛴다.
+- Render 확인 결과:
+  - `us100-dual-paper-worker` Environment에 `NOTION_API_TOKEN` 없음.
+  - `us100-dual-paper-worker` Environment에 `NOTION_DATABASE_ID` 없음.
+  - 로그에서 `notion_log_error`도 없음.
+- 결론:
+  - 노션에 기록이 없는 이유는 Notion API 호출이 실패한 것이 아니라, Render에 Notion API 환경변수가 설정되어 있지 않아 기록 단계가 아예 실행되지 않았기 때문이다.
+- 추가로 확인된 점:
+  - 같은 Environment에 `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`도 없어 텔레그램 역시 `telegram_skipped: not_configured_or_disabled`로 스킵됐다.
+- 다음 조치:
+  - 사용자 Notion 통합 토큰을 Render 환경변수 `NOTION_API_TOKEN`으로 추가한다.
+  - 대상 Notion Database ID를 `NOTION_DATABASE_ID`로 추가한다.
+  - 해당 Notion Database를 사용자 Notion integration에 공유해야 한다.
+  - Render 재배포 후 `DAILY_REPORT` 또는 다음 `OPEN/CLOSE`부터 Notion에 기록되는지 확인한다.

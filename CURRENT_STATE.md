@@ -1090,3 +1090,53 @@
   - 사용자가 Render에 다시 로그인하면 Render 로그에서 `2026-06-08`, `[TODAY_STATUS]`, `OPEN`, `CLOSE`, `DAILY_REPORT`, `telegram_sent`, `telegram_skipped`를 검색해 어제 리뷰를 확정한다.
   - 만약 로그에 `telegram_skipped: not_configured_or_disabled`가 보이면 Render 환경변수 `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_PAPER_NOTIFY`를 확인한다.
   - 만약 `c4f5450` 이후 로그 형식이 보이지 않으면 Render 자동배포가 최신 커밋으로 갱신됐는지 확인한다.
+
+## 2026-06-08 Render 매매 리뷰 확정
+
+- 확인 시각: 2026-06-09 KST
+- Render 로그 확인 완료:
+  - 서비스: `us100-dual-paper-worker`
+  - URL: `https://dashboard.render.com/worker/srv-d8eomv6k1jcs73a6vro0/logs`
+- 2026-06-08 실제 모의매매 요약:
+  - 총 2회 진입, 2회 청산, 1승 1패, 합계 `-3.0pt`
+  - 실제 진입 전략은 모두 `zukkumi_original` / `쭈꾸미 원본`
+  - `indicator_basic`, `orb_paper`는 실제 진입 0회
+  - `score_watch`는 관찰용이라 실제 진입으로 보지 않는다.
+- 거래 1:
+  - 진입: 2026-06-08 20:37:35 KST
+  - 방향: LONG
+  - 전략/셋업: `zukkumi_original` / `P라인 반등 롱 확인`
+  - 진입가: 29434.25
+  - 손절 기준: 29406.48 아래 5분봉 마감
+  - 목표가: 29484.25
+  - 결과: LOSS
+  - 청산: 2026-06-08 20:45:00 KST
+  - 청산가: 29381.25
+  - 손익: -53.0pt
+  - 근거: 일봉 P라인 29409.92 근접 후 회복, P라인 아래 5분봉 확정 이탈 실패, 회복봉 직전봉보다 높게 마감, EMA20/50 상승 우위, 시장 보조지표 롱 우호.
+- 거래 2:
+  - 진입: 2026-06-08 21:22:39 KST
+  - 방향: LONG
+  - 전략/셋업: `zukkumi_original` / `P라인 반등 롱 확인`
+  - 진입가: 29431.25
+  - 손절 기준: 29406.73 아래 5분봉 마감
+  - 목표가: 29481.25
+  - 결과: WIN
+  - 청산: 2026-06-08 21:30:00 KST
+  - 청산가: 29481.25
+  - 손익: +50.0pt
+  - 근거: 일봉 P라인 29409.92 근접 후 회복, P라인 아래 5분봉 확정 이탈 실패, 회복봉 직전봉보다 높게 마감, EMA20/50 상승 우위, 시장 보조지표 롱 우호.
+- 후보/미진입:
+  - 23시 중간 보고 기준 `zukkumi_original`: 후보 열림 5, 놓친 진입 74, 안 들어간 게 맞았던 후보 57.
+  - 최종 보고 기준 `zukkumi_original`: 놓친 진입 64, 안 들어간 게 맞았던 후보 49.
+  - 최종 보고 기준 `orb_paper`: 실제 진입 0, 놓친 진입 4, 안 들어간 게 맞았던 후보 1.
+  - 최종 보고 기준 `score_watch`: 관찰 후보 74, 놓친 진입 44, 안 들어간 게 맞았던 후보 30.
+- 보고/알림:
+  - 2026-06-08 23:02:53 KST `DAILY_REPORT` / `23시 중간 보고` 생성됨.
+  - 2026-06-09 06:13:52 KST `DAILY_REPORT` / `미국장 마감 최종 보고` 생성됨.
+  - 그러나 텔레그램은 `telegram_skipped: not_configured_or_disabled`로 스킵됨.
+- 원인:
+  - 어제 리뷰/알림을 못 받은 핵심 원인은 매매 미발생이 아니라 Render 텔레그램 환경변수 미설정 또는 비활성 상태다.
+- 다음 조치:
+  - Render Environment에서 `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`가 있는지 확인한다.
+  - `TELEGRAM_PAPER_NOTIFY=false`가 있으면 제거하거나 `true`로 바꾼다.

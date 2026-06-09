@@ -1072,3 +1072,21 @@
   - 상태 파일 `daily_reports_sent`에 보낸 보고 키를 저장해 같은 날 같은 보고가 중복 발송되지 않게 한다.
 - 주의:
   - 모든 알림은 실거래가 아니라 Render 모의매매 기준이다.
+
+## 2026-06-08 매매 리뷰 확인 상태
+
+- 확인 시각: 2026-06-09 KST
+- 사용자 요청: “어제 리뷰 못받았는데”
+- 대상 날짜:
+  - 어제 = 2026-06-08 KST
+- 현재 확인한 내용:
+  - GitHub 배포 저장소는 `27yooon/us100-market-volatility-bot`이다.
+  - 텔레그램/노션/일일 보고 기능은 커밋 `c4f5450 Add paper trade Telegram and daily reports`로 반영 및 push 완료 상태다.
+  - 로컬 로그 `/Users/yooon/Desktop/쭈꾸미/market_reason_mvp/logs/render_dual_paper_events.jsonl`에는 2026-06-07 테스트 START/HEARTBEAT까지만 남아 있어 2026-06-08 실제 Render 거래 내역을 판단할 수 없다.
+  - Chrome으로 Render 로그 URL `https://dashboard.render.com/worker/srv-d8eomv6k1jcs73a6vro0/logs`를 열었으나 로그인 화면으로 이동했다.
+- 원인:
+  - 실제 어제 매매/후보/일일보고 여부는 Render 서버 로그에만 있고, 현재 Codex Chrome 세션은 Render 로그인이 풀려 있어 원문 확인이 막혀 있다.
+- 조치:
+  - 사용자가 Render에 다시 로그인하면 Render 로그에서 `2026-06-08`, `[TODAY_STATUS]`, `OPEN`, `CLOSE`, `DAILY_REPORT`, `telegram_sent`, `telegram_skipped`를 검색해 어제 리뷰를 확정한다.
+  - 만약 로그에 `telegram_skipped: not_configured_or_disabled`가 보이면 Render 환경변수 `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_PAPER_NOTIFY`를 확인한다.
+  - 만약 `c4f5450` 이후 로그 형식이 보이지 않으면 Render 자동배포가 최신 커밋으로 갱신됐는지 확인한다.

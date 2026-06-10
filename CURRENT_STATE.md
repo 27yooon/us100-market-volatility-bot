@@ -1392,3 +1392,7 @@
 - 검증:
   - `python3 -m py_compile render_dual_paper_worker.py notion_trade_logger.py market_signal_bot.py` 통과.
   - A/C 등급 산정 로컬 스모크 테스트 통과.
+- 배포 후 추가 확인:
+  - `score_watch` A/B/C 후보가 Render 로그에 생성됨을 확인했다.
+  - Notion 기록 중 `근거` multi_select에 쉼표가 포함되면 Notion API가 400을 반환하는 문제가 확인됐다.
+  - `/Users/yooon/Desktop/쭈꾸미/market_reason_mvp/notion_trade_logger.py`에서 multi_select 문구의 쉼표를 `/`로 치환하도록 수정했다.

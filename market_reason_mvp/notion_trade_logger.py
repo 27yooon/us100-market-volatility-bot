@@ -55,7 +55,7 @@ def _multi_select(value: Any, limit: int = 8) -> dict[str, Any]:
     items = value if isinstance(value, list) else [value]
     names: list[str] = []
     for item in items:
-        text = str(item).strip()
+        text = str(item).strip().replace(",", " /")
         if not text:
             continue
         if len(text) > 80:

@@ -114,11 +114,32 @@ def strategy_version(strategy: str) -> str:
 def quality_tier(score: int | None) -> str | None:
     if score is None:
         return None
-    if score >= 80:
-        return "HIGH"
+    if score >= 75:
+        return "A"
     if score >= 60:
-        return "NORMAL"
-    return "LOW"
+        return "B"
+    return "C"
+
+
+def score_watch_follow_grade(signal: PaperSignal) -> str | None:
+    if signal.observation_type != "SCORE_OBSERVATION" or signal.score_total is None:
+        return None
+    rr = signal.rr or 0.0
+    if signal.score_total >= 75 and signal.level >= 2 and rr >= 1.30:
+        return "A"
+    if signal.score_total >= 60 and rr >= 1.00:
+        return "B"
+    if signal.score_total >= 55:
+        return "C"
+    return None
+
+
+def score_watch_follow_note(grade: str | None) -> str:
+    return {
+        "A": "A급 검증 후보: 점수/방향/손익비가 모두 비교적 양호해 모의 진입 후보로 추적",
+        "B": "B급 검증 후보: 일부 반대 신호를 허용하고 모의 데이터 확보용으로 추적",
+        "C": "C급 관찰 후보: 방향이 애매하거나 손익비가 약해 진입보다 5/15/30분 후행 검증용",
+    }.get(str(grade), "등급 미정 관찰 후보")
 
 
 def strategy_display_name(name: str | None) -> str:
@@ -849,6 +870,19 @@ def score_indicator_observation_candidates(bars: list[bot.Bar]) -> list[PaperSig
             score_breakdown=breakdown,
         )
         if signal is not None:
+            grade = score_watch_follow_grade(signal)
+            breakdown["follow_grade"] = grade
+            signal = replace(
+                signal,
+                observation_type=f"SCORE_FOLLOW_{grade}" if grade else "SCORE_OBSERVATION",
+                quality_tier=grade,
+                score_breakdown=breakdown,
+                reasons=[score_watch_follow_note(grade), *signal.reasons],
+                cautions=[
+                    *signal.cautions,
+                    "score_watch_follow는 검증용 가상 추적이며 실전 진입 신호가 아님",
+                ],
+            )
             out.append(signal)
 
     return out[:2]
@@ -1047,6 +1081,13 @@ def open_candidate(
     key = candidate_key(strategy, symbol, signal)
     if key in state.get("seen_candidate_keys", []):
         return
+    review_summary = "진입 보류 후보. 후행으로 +50pt 또는 무효 기준 선행 여부를 확인한다."
+    if strategy == "score_watch":
+        grade = signal.quality_tier or score_watch_follow_grade(signal)
+        review_summary = (
+            f"{score_watch_follow_note(grade)}. "
+            "실제 진입이 아니라 후보 발생 후 5/15/30분 흐름, +50pt 목표, 무효 기준 선행 여부를 복기한다."
+        )
     candidate = {
         "symbol": symbol,
         **asdict(signal),
@@ -1056,7 +1097,7 @@ def open_candidate(
         "observed_at": signal.bar_time,
         "observed_at_text": text_time(signal.bar_time),
         "signal_key": key,
-        "review_summary": "진입 보류 후보. 후행으로 +50pt 또는 무효 기준 선행 여부를 확인한다.",
+        "review_summary": review_summary,
     }
     state["watch_candidates"] = [*state.get("watch_candidates", []), candidate][-200:]
     state["seen_candidate_keys"] = [*state.get("seen_candidate_keys", []), key][-500:]

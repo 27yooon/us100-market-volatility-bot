@@ -1349,3 +1349,46 @@
   - GitHub push 안 함.
   - Render 재배포 안 함.
   - Notion 테스트 페이지 생성 안 함.
+
+## 낙지 팀장 방 Notion 수정 배포 완료
+
+- 완료 시각: 2026-06-10 18:42 KST 이후
+- GitHub:
+  - 업로드용 Git 폴더 `/Users/yooon/Desktop/쭈꾸미/_보관/us100_render_upload`에서 커밋 후 `main`에 push했다.
+  - 커밋: `51b270c Fix Notion logger schema for Render`
+- Render:
+  - Auto-Deploy로 `51b270c` 배포 시작 확인.
+  - `Deploy live for 51b270c: Fix Notion logger schema for Render` 확인.
+  - 배포 후 최신 `HEARTBEAT`와 `[TODAY_STATUS] 2026-06-10 오늘 매매 없음` 확인.
+- Notion:
+  - 배포 후 `매매일지` DB에 새 페이지 생성 확인.
+  - 생성 확인 항목:
+    - `START`
+    - `CANDIDATE_OPEN`
+    - `HEARTBEAT`
+  - 기존 `HTTP 400 Bad Request` 원인은 Notion DB 속성명 불일치였고, 한국어 DB 스키마 매핑으로 수정 완료.
+- 오늘 모의매매 상태:
+  - `zukkumi_original`, `indicator_basic`, `orb_paper` 모두 진입 0 / 보유 0 / 손익 +0.0pt.
+  - `score_watch`는 관찰 전용이며 실제 모의매매 진입으로 보지 않는다.
+- 남은 확인:
+  - 다음 실제 `OPEN`, `CLOSE`, `DAILY_REPORT` 이벤트 때 Notion/Telegram 기록 형태를 함께 복기한다.
+
+## 낙지 팀장 방 score_watch 검증 기준 완화
+
+- 작업 시각: 2026-06-10 KST
+- 사용자 판단:
+  - 모든 지표를 만족해야 하는 방식은 모의매매 검증 데이터가 부족해질 수 있다고 판단.
+  - `score_watch`는 감이 아니라 점수표지만, 만점형 진입 기준으로 쓰면 안 된다고 정리.
+- 반영 내용:
+  - `score_watch` 후보에 A/B/C 등급을 붙이도록 수정했다.
+  - A급: 점수/방향/손익비가 모두 비교적 양호한 모의 진입 후보.
+  - B급: 일부 반대 신호를 허용하고 데이터 확보용으로 추적하는 후보.
+  - C급: 방향이 애매하거나 손익비가 약해 실제 진입보다 5/15/30분 후행 검증용 후보.
+  - `score_watch_follow` 개념은 실전 진입이 아니라 검증용 가상 추적이다.
+- 안전 기준:
+  - `score_watch`는 계속 실제 모의매매 진입 전략으로 보지 않는다.
+  - Render 기록/Notion 기록에 후보 등급과 검증 목적만 남긴다.
+  - 실거래/자동주문과 무관하다.
+- 검증:
+  - `python3 -m py_compile render_dual_paper_worker.py notion_trade_logger.py market_signal_bot.py` 통과.
+  - A/C 등급 산정 로컬 스모크 테스트 통과.

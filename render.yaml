@@ -2,5 +2,5 @@ services:
   - type: worker
     name: us100-dual-paper-worker
     runtime: python
-    buildCommand: "python --version"
-    startCommand: "python market_reason_mvp/render_dual_paper_worker.py --symbol=NQ=F --poll=300 --reset"
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python market_reason_mvp/render_dual_paper_worker.py --symbol=NQ=F --poll=300"

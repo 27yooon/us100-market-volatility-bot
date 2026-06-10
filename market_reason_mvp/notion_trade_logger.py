@@ -49,6 +49,24 @@ def _select(value: Any) -> dict[str, Any]:
     return {"select": {"name": str(value)}}
 
 
+def _multi_select(value: Any, limit: int = 8) -> dict[str, Any]:
+    if value is None or value == "":
+        return {"multi_select": []}
+    items = value if isinstance(value, list) else [value]
+    names: list[str] = []
+    for item in items:
+        text = str(item).strip()
+        if not text:
+            continue
+        if len(text) > 80:
+            text = text[:77] + "..."
+        if text not in names:
+            names.append(text)
+        if len(names) >= limit:
+            break
+    return {"multi_select": [{"name": name} for name in names]}
+
+
 def _checkbox(value: Any) -> dict[str, Any]:
     return {"checkbox": bool(value)}
 
@@ -92,6 +110,12 @@ def _daily_report_summary(record: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _date_parts(date_text: str) -> tuple[str, str]:
+    if len(date_text) < 7:
+        return "", ""
+    return date_text[:4], date_text[5:7]
+
+
 def _event_title(record: dict[str, Any]) -> str:
     event = record.get("event", "-")
     strategy = record.get("strategy", "render")
@@ -126,59 +150,41 @@ def build_properties(record: dict[str, Any]) -> dict[str, Any]:
         pnl = z_summary.get("pnl_points")
     if event == "DAILY_REPORT":
         pnl = totals.get("pnl_points")
+    year_text, month_text = _date_parts(date_text)
+    status = record.get("candidate_status") or record.get("result") or event or "기록"
+    review_lines = [
+        _daily_report_summary(record),
+        record.get("review_summary"),
+        _join_list(record.get("reasons")),
+        _join_list(record.get("cautions")),
+        record.get("close_reason"),
+        record.get("filter_reason"),
+        record.get("signal_key"),
+    ]
+    review_summary = "\n".join(str(line) for line in review_lines if line)
 
     properties: dict[str, Any] = {
-        "Name": {"title": _title(_event_title(record))},
-        "Date": _date(date_text),
-        "Logged At": _date(record.get("logged_at")),
-        "Opened At": _date(opened_at),
-        "Closed At": _date(closed_at),
-        "Strategy": _select(strategy),
-        "Event": _select(event),
-        "Symbol": _select(record.get("symbol")),
-        "Side": _select(record.get("side") or "-"),
-        "Setup": {"rich_text": _plain_text(record.get("setup_type") or record.get("report_title") or record.get("mode") or "상태 확인")},
-        "Level": _number(record.get("level")),
-        "Entry": _number(record.get("entry")),
-        "Stop": _number(record.get("stop")),
-        "Target": _number(record.get("target")),
-        "Exit": _number(record.get("exit_price")),
-        "Result": _select(record.get("result") or "NONE"),
-        "PnL": _number(pnl),
-        "Open Position": _checkbox(bool(record.get("open_trade"))),
-        "Reasons": {"rich_text": _plain_text(_join_list(record.get("reasons")))},
-        "Cautions": {"rich_text": _plain_text(_join_list(record.get("cautions")))},
-        "Close Reason": {"rich_text": _plain_text(record.get("close_reason"))},
-        "Signal Key": {"rich_text": _plain_text(record.get("signal_key"))},
-        "Candidate Status": _select(record.get("candidate_status")),
-        "Candidate Result": _select(record.get("candidate_result")),
-        "Filter Reason": {"rich_text": _plain_text(record.get("filter_reason"))},
-        "Review Summary": {"rich_text": _plain_text(record.get("review_summary") or _daily_report_summary(record))},
-        "Observation Type": _select(record.get("observation_type")),
+        "매매명": {"title": _title(_event_title(record))},
+        "날짜": _date(date_text),
+        "연도": {"rich_text": _plain_text(year_text)},
+        "월": {"rich_text": _plain_text(month_text)},
+        "전략": _select(strategy),
+        "매매법 구분": _select(event or record.get("mode") or "상태 확인"),
+        "종목": {"rich_text": _plain_text(record.get("symbol"))},
+        "포지션": _select(record.get("side") or "-"),
+        "상태": _select(status),
+        "진입가": _number(record.get("entry") or record.get("level")),
+        "손절가": _number(record.get("stop")),
+        "1차 익절가": _number(record.get("target")),
+        "청산가": _number(record.get("exit_price")),
+        "결과": _select(record.get("result") or record.get("candidate_result") or "NONE"),
+        "손익(pt)": _number(pnl),
+        "계약수": _number(record.get("contracts")),
+        "R배수": _number(record.get("r_multiple")),
+        "실수 여부": _checkbox(bool(record.get("mistake"))),
+        "근거": _multi_select(record.get("reasons")),
+        "복기": {"rich_text": _plain_text(review_summary)},
     }
-    if event == "HEARTBEAT":
-        properties.update(
-            {
-                "Z Trades": _number(z_summary.get("trades")),
-                "Z Wins": _number(z_summary.get("wins")),
-                "Z Losses": _number(z_summary.get("losses")),
-                "Z PnL": _number(z_summary.get("pnl_points")),
-                "Z Candidate Open": _number(z_summary.get("candidate_open")),
-                "Z Missed Entries": _number(z_summary.get("missed_entries")),
-                "Z Filtered OK": _number(z_summary.get("filtered_ok")),
-                "Z Ambiguous": _number(z_summary.get("ambiguous")),
-                "Z Observations": _number(z_summary.get("observations")),
-                "P Trades": _number(p_summary.get("trades")),
-                "P Wins": _number(p_summary.get("wins")),
-                "P Losses": _number(p_summary.get("losses")),
-                "P PnL": _number(p_summary.get("pnl_points")),
-                "P Candidate Open": _number(p_summary.get("candidate_open")),
-                "P Missed Entries": _number(p_summary.get("missed_entries")),
-                "P Filtered OK": _number(p_summary.get("filtered_ok")),
-                "P Ambiguous": _number(p_summary.get("ambiguous")),
-                "P Observations": _number(p_summary.get("observations")),
-            }
-        )
     return properties
 
 

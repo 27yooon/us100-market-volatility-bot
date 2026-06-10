@@ -1199,3 +1199,153 @@
 - 남은 확인:
   - 다음 실제 `OPEN`, `CLOSE`, `DAILY_REPORT` 발생 시 텔레그램 수신 여부를 확인한다.
   - 테스트 알림을 즉시 보내려면 별도 테스트 이벤트/스크립트가 필요하다.
+
+## 새 프로젝트 인수인계 패키지 작성
+
+- 작업 시각: 2026-06-10 KST
+- 사용자 요청:
+  - 기존 쭈꾸미 스레드가 표시되지 않아 새 프로젝트에서 이어갈 예정.
+  - 새 프로젝트에서는 팀장 방이 여러 전문가 담당 방을 굴리는 README 형식으로 운영하고 싶음.
+  - 기존 인수인계, 방향성, 안전 규칙을 고려해 새 프로젝트용 자료를 만들어야 함.
+- 참고 형식:
+  - `https://github.com/citizendev9c/yt-assets/blob/main/ai-productivity/codex-thread-chat-26-06-06/README.md`
+- 새로 만든 파일:
+  - `NEW_PROJECT_README.md`: 새 쭈꾸미 프로젝트 운영 README. 팀장 방, 담당자 방, Phase 게이트, 안전 규칙 정리.
+  - `NEW_PROJECT_HANDOFF.md`: 새 프로젝트 인수인계서. Render/GitHub/Telegram/Notion/전략/검증 명령/확인 필요 항목 정리.
+  - `NEW_PROJECT_FIRST_MESSAGE.md`: 새 프로젝트 첫 메시지로 붙여넣을 문장.
+  - `NEW_PROJECT_AGENTS_TEMPLATE.md`: 새 프로젝트 `AGENTS.md`로 옮겨 쓸 운영 규칙 템플릿.
+- 중요 정리:
+  - 새 프로젝트는 바로 작업하지 말고 Phase 0 계획부터 보고해야 한다.
+  - 최신 운영 기준은 `CURRENT_STATE.md` 후반부 날짜가 늦은 기록을 우선한다.
+  - 당시 `render.yaml`에는 `--reset`이 남아 있었으므로, Render 재배포 전 Dashboard 실제 Start Command와 반드시 비교해야 한다고 기록했다.
+  - 비밀값은 값이 아니라 위치와 변수명만 기록했다.
+- 추가 정정:
+  - 사용자는 새 프로젝트 이름이 `낙지`여도, 실제 역할은 쭈꾸미를 대체해 이어가는 프로젝트라고 설명했다.
+  - 그래서 낙지 첫 메시지용 파일 `NAKJI_AS_JUKKUMI_FIRST_MESSAGE.md`를 추가했다.
+- 추가 보강:
+  - 사용자가 “스레드에서 대화했지만 파일에 없는 매매 전략/Notion/Telegram 내용이 있을 수 있다”고 지적했다.
+  - 파일에 남은 내용과 누락 가능성을 분리한 `NEW_PROJECT_CONTEXT_AUDIT.md`를 추가했다.
+  - `NEW_PROJECT_FIRST_MESSAGE.md`, `NAKJI_AS_JUKKUMI_FIRST_MESSAGE.md`, `NEW_PROJECT_README.md`, `NEW_PROJECT_HANDOFF.md`가 이 감사 파일을 읽도록 보강했다.
+
+## 현재 스레드 백업
+
+- 작업 시각: 2026-06-10 KST
+- 사용자 요청:
+  - 낙지가 막히면 다시 쭈꾸미로 돌아와야 하므로, 현재 스레드의 대화도 백업하고 싶음.
+- 조치:
+  - `THREAD_BACKUP_2026-06-10.md`를 추가했다.
+  - 이번 스레드에서 정한 내용, 새로 만든 파일, 낙지에 보낼 첫 메시지, 비밀값 위치 확인, 매매 전략/Telegram/Notion 요약, 낙지 실패 시 복귀 순서를 정리했다.
+  - 비밀값은 값이 아니라 변수명과 위치만 기록했다.
+
+## 낙지 팀장 방 Phase 1 현재 상태 확인
+
+- 확인 시각: 2026-06-10 16:36 KST
+- 역할:
+  - 현재 Codex 프로젝트 이름은 낙지로 보일 수 있지만, 이 방은 쭈꾸미 대체 팀장 방으로 운영한다.
+- Render 확인:
+  - Chrome으로 Render Dashboard에 로그인된 상태를 확인했다.
+  - 서비스: `us100-dual-paper-worker`
+  - 서비스 ID: `srv-d8eomv6k1jcs73a6vro0`
+  - 타입: Background Worker
+  - 플랜: Starter
+  - GitHub 연결: `27yooon/us100-market-volatility-bot` / `main`
+  - 최신 로그에서 `2026-06-10 16:31:47 KST` HEARTBEAT 확인.
+  - `[TODAY_STATUS] 2026-06-10 오늘 매매 없음` 확인.
+  - 오늘 실제 모의매매 기준 `zukkumi_original`, `indicator_basic`, `orb_paper` 모두 진입 0 / 보유 0 / 손익 +0.0pt.
+  - `score_watch`도 진입 0 / 보유 0 / 손익 +0.0pt이나 관찰 전용이므로 실제 모의매매로 보지 않는다.
+- Render 실제 설정:
+  - Dashboard Start Command는 `python market_reason_mvp/render_dual_paper_worker.py --symbol=NQ=F --poll=300`.
+  - Dashboard 실제 Start Command에는 `--reset`이 없다.
+  - Dashboard Build Command는 `pip install -r requirements.txt`.
+- Render Environment 확인:
+  - `TELEGRAM_BOT_TOKEN` 있음. 값은 확인하거나 출력하지 않았다.
+  - `TELEGRAM_CHAT_ID` 있음. 값은 확인하거나 출력하지 않았다.
+  - `NOTION_API_TOKEN`은 화면에 없음.
+  - `NOTION_DATABASE_ID`는 화면에 없음.
+- 로컬/GitHub 확인:
+  - 업로드용 Git 폴더: `/Users/yooon/Desktop/쭈꾸미/_보관/us100_render_upload`
+  - 원격: `https://github.com/27yooon/us100-market-volatility-bot.git`
+  - 최신 커밋: `529346e Record Render Telegram env setup`
+  - 로컬 `main`과 원격 `main`은 같은 커밋이었다.
+- 로컬 설정 정리:
+  - `/Users/yooon/Desktop/쭈꾸미/render.yaml`의 `--reset`을 제거했다.
+  - `/Users/yooon/Desktop/쭈꾸미/_보관/us100_render_upload/render.yaml`의 `--reset`을 제거했다.
+  - 두 파일의 Build Command를 Dashboard와 맞춰 `pip install -r requirements.txt`로 바꿨다.
+- 아직 하지 않은 것:
+  - GitHub push 안 함.
+  - Render 재배포 안 함.
+  - Telegram 테스트 발송 안 함.
+  - Notion 자동기록 env 추가 안 함.
+  - Codex/ChatGPT Notion 커넥터 사용 안 함.
+- 남은 확인:
+  - 다음 `OPEN`, `CLOSE`, `DAILY_REPORT` 발생 시 Telegram 수신 여부 확인.
+  - Notion 자동기록을 켜려면 Render에 `NOTION_API_TOKEN`, `NOTION_DATABASE_ID` 추가와 Notion integration 공유가 필요하다.
+
+## 낙지 팀장 방 오늘 안전 작업 진행
+
+- 작업 시각: 2026-06-10 16:37 KST
+- 사용자의 요청:
+  - 오늘 진행해야 하는 일을 알아서 진행하고, 안 되는 것은 정리해달라고 요청.
+- 완료한 안전 작업:
+  - Render Dashboard 현재 로그 확인.
+  - Render Settings의 실제 Build Command / Start Command 확인.
+  - Render Environment 변수명 확인. 값은 보지 않음.
+  - 로컬 `render.yaml` 2개를 Dashboard 실제 설정과 맞춤.
+  - `CURRENT_STATE.md`에 Phase 1 확인 결과 기록.
+  - 코드 문법 검사 실행.
+  - Worker 1회 로컬 실행 검증.
+- 로컬 Worker 1회 실행 결과:
+  - 명령: `python3 market_reason_mvp/render_dual_paper_worker.py --once --symbol=NQ=F --poll=300`
+  - 결과: 정상 실행.
+  - `2026-06-10 16:37:43 KST` HEARTBEAT 출력.
+  - `[TODAY_STATUS] 2026-06-10 오늘 매매 없음`.
+  - 실제 모의매매 전략 `zukkumi_original`, `indicator_basic`, `orb_paper` 모두 진입 0 / 보유 0 / 손익 +0.0pt.
+  - `score_watch` 관찰 후보 2개 생성. 실제 진입 아님.
+- 검증:
+  - `python3 -m py_compile market_reason_mvp/render_dual_paper_worker.py market_reason_mvp/market_signal_bot.py market_reason_mvp/notion_trade_logger.py` 통과.
+- 주의:
+  - 로컬 Worker 1회 실행은 외부 발송 없이 확인용으로만 수행했다.
+  - GitHub push, Render 재배포, Telegram 테스트 발송, Notion env 추가는 하지 않았다.
+
+## 낙지 팀장 방 Notion Render env 추가
+
+- 작업 시각: 2026-06-10 17:30 KST
+- 사용자 확인:
+  - 사용자가 Render 재배포를 동반하는 `Save, rebuild, and deploy` 진행을 허가했다.
+- 완료:
+  - 로컬에서 Notion 자동기록에 필요한 기존 토큰/DB ID 위치를 확인했다.
+  - Notion API read-only 확인으로 대상 DB가 `매매일지`이며, 매매일지 속성들이 존재함을 확인했다.
+  - Render Environment 편집 화면에서 다음 키 2개를 추가하고 저장 제출했다.
+    - `NOTION_API_TOKEN`
+    - `NOTION_DATABASE_ID`
+  - 값은 출력하거나 문서에 기록하지 않았다.
+- 아직 확인 필요:
+  - Notion 자동기록은 다음 실제 기록 이벤트 발생 시 정상 생성 여부 확인 필요.
+- 하지 않은 것:
+  - GitHub push 안 함.
+  - Telegram 테스트 발송 안 함.
+  - Codex/ChatGPT Notion 커넥터 사용 안 함.
+  - Notion 대량 수정 안 함.
+
+## 낙지 팀장 방 Render 로그 재확인 및 Notion 400 수정
+
+- 확인 시각: 2026-06-10 18:20 KST 이후
+- 완료 확인:
+  - Chrome 확장 재활성화 후 Render 로그 확인 가능 상태로 복구했다.
+  - Render worker 최신 `HEARTBEAT` 확인.
+  - `[TODAY_STATUS] 2026-06-10 오늘 매매 없음` 확인.
+  - 오늘 실제 모의매매 전략 `zukkumi_original`, `indicator_basic`, `orb_paper` 모두 진입 0 / 보유 0 / 손익 +0.0pt.
+- 발견한 문제:
+  - Render 로그에 `notion_log_error=HTTPError: HTTP Error 400: Bad Request`가 반복 확인됐다.
+  - 원인은 기존 Notion 로거가 `Name`, `Date`, `Strategy` 등 영어 속성명으로 전송했지만, 실제 Notion DB는 `매매명`, `날짜`, `전략` 등 한국어 속성명을 사용하기 때문으로 판단했다.
+- 로컬 수정:
+  - `/Users/yooon/Desktop/쭈꾸미/market_reason_mvp/notion_trade_logger.py`를 실제 `매매일지` DB 스키마에 맞게 수정했다.
+  - `/Users/yooon/Desktop/쭈꾸미/_보관/us100_render_upload/market_reason_mvp/notion_trade_logger.py`에도 같은 수정 반영.
+  - HEARTBEAT 전용 영어 통계 속성 전송을 제거하고, DB에 존재하는 한국어 속성만 전송하도록 정리했다.
+- 검증:
+  - `python3 -m py_compile market_reason_mvp/notion_trade_logger.py market_reason_mvp/render_dual_paper_worker.py` 통과.
+  - 로컬 payload 속성명 검증 결과, 생성 속성 20개 모두 실제 Notion DB 속성과 일치했다.
+- 아직 하지 않은 것:
+  - GitHub push 안 함.
+  - Render 재배포 안 함.
+  - Notion 테스트 페이지 생성 안 함.

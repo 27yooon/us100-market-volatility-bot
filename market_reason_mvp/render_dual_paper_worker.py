@@ -394,7 +394,7 @@ def zukkumi_signal(
     candidate = bot.analyze_signal(bars, pivots, context, min_rr)
     if candidate is None or candidate.level < min_level:
         return None
-    if "라운딩" not in candidate.setup_type and "P라인" not in candidate.setup_type:
+    if "라운딩" not in candidate.setup_type:
         return None
     target = candidate.entry + 50 if candidate.side == "LONG" else candidate.entry - 50
     return PaperSignal(

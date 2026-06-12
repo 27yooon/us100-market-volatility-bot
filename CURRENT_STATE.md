@@ -1396,3 +1396,21 @@
   - `score_watch` A/B/C 후보가 Render 로그에 생성됨을 확인했다.
   - Notion 기록 중 `근거` multi_select에 쉼표가 포함되면 Notion API가 400을 반환하는 문제가 확인됐다.
   - `/Users/yooon/Desktop/쭈꾸미/market_reason_mvp/notion_trade_logger.py`에서 multi_select 문구의 쉼표를 `/`로 치환하도록 수정했다.
+
+## 낙지 팀장 방 zukkumi_original 손실 재검토
+
+- 작업 시각: 2026-06-12 KST
+- 사용자 요청:
+  - 계속 loss가 나는 매매법을 확인하고 재검토.
+- 확인 결과:
+  - 실제 `CLOSE` 기준 `zukkumi_original`은 6건 중 5 LOSS / 1 WIN / 합계 -141pt.
+  - 손실 5건은 모두 `P라인 반등 롱 확인` 또는 `P라인 저항 숏 확인`.
+  - `라운딩` 실제 손실은 확인되지 않았다.
+  - `score_watch`의 음수 기록은 대부분 `CANDIDATE_CLOSE / FILTERED_OK`라 실제 손실이 아니라 “안 들어가서 다행이었던 후보”로 분리해야 한다.
+- 반영:
+  - `zukkumi_original` 실제 모의진입에서 `P라인` 셋업을 임시 제외했다.
+  - `P라인`은 계속 관찰/후행 검증 후보로 기록한다.
+  - 실제 모의진입은 우선 `라운딩` 셋업만 허용한다.
+- 판단:
+  - P라인은 폐기 대상이 아니라 재검증 대상.
+  - 다음 복기에서는 P라인이 어느 세션/장세에서 반복 손실이 났는지 분리해서 본다.

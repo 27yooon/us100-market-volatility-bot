@@ -1381,9 +1381,9 @@ def format_today_status_line(status: dict[str, Any]) -> str:
 def report_due(now: datetime, report_type: str) -> bool:
     minutes = now.hour * 60 + now.minute
     if report_type == "MID_2300":
-        return 23 * 60 <= minutes < 24 * 60
+        return now.weekday() in {0, 1, 2, 3, 4} and 23 * 60 <= minutes < 24 * 60
     if report_type == "FINAL_0610":
-        return 6 * 60 + 10 <= minutes < 12 * 60
+        return now.weekday() in {1, 2, 3, 4, 5} and 6 * 60 + 10 <= minutes < 12 * 60
     return False
 
 

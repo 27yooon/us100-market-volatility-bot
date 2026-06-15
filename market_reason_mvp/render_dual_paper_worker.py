@@ -29,10 +29,14 @@ STRATEGY_VERSIONS = {
     "zukkumi_original": "zukkumi_original_v4",
     "indicator_basic": "indicator_basic_v1",
     "orb_paper": "orb_paper_v1",
-    "score_watch": "score_watch_v1",
+    "score_watch": "score_watch_v2_paper_a_only",
 }
 
-PAPER_TRADE_STRATEGIES = {"zukkumi_original", "indicator_basic", "orb_paper"}
+PAPER_TRADE_STRATEGIES = {"zukkumi_original", "indicator_basic", "orb_paper", "score_watch"}
+SCORE_WATCH_TRADE_MIN_SCORE = 75
+SCORE_WATCH_TRADE_MIN_RR = 1.30
+SCORE_WATCH_TRADE_MAX_RISK_POINTS = 40.0
+SCORE_WATCH_TRADE_SESSIONS = {"EUROPE_TO_US_PRE", "US_PREMARKET", "US_REGULAR"}
 
 LEGACY_STRATEGY_NAMES = {
     "zukkumi_rules": "zukkumi_original",
@@ -136,7 +140,7 @@ def score_watch_follow_grade(signal: PaperSignal) -> str | None:
 
 def score_watch_follow_note(grade: str | None) -> str:
     return {
-        "A": "A급 검증 후보: 점수/방향/손익비가 모두 비교적 양호해 모의 진입 후보로 추적",
+        "A": "A급 검증 후보: 점수/방향/손익비가 모두 비교적 양호해 Render 모의매매 후보로 추적",
         "B": "B급 검증 후보: 일부 반대 신호를 허용하고 모의 데이터 확보용으로 추적",
         "C": "C급 관찰 후보: 방향이 애매하거나 손익비가 약해 진입보다 5/15/30분 후행 검증용",
     }.get(str(grade), "등급 미정 관찰 후보")
@@ -880,12 +884,51 @@ def score_indicator_observation_candidates(bars: list[bot.Bar]) -> list[PaperSig
                 reasons=[score_watch_follow_note(grade), *signal.reasons],
                 cautions=[
                     *signal.cautions,
-                    "score_watch_follow는 검증용 가상 추적이며 실전 진입 신호가 아님",
+                    "score_watch_follow는 Render 모의매매 검증용이며 실거래 신호가 아님",
                 ],
             )
             out.append(signal)
 
     return out[:2]
+
+
+def score_indicator_trade_signal(bars: list[bot.Bar], min_rr: float) -> tuple[PaperSignal | None, list[PaperSignal]]:
+    candidates = score_indicator_observation_candidates(bars)
+    if not candidates:
+        return None, []
+
+    qualified: list[PaperSignal] = []
+    for signal in candidates:
+        if signal.quality_tier != "A":
+            continue
+        if (signal.score_total or 0) < SCORE_WATCH_TRADE_MIN_SCORE:
+            continue
+        if (signal.rr or 0.0) < max(min_rr, SCORE_WATCH_TRADE_MIN_RR):
+            continue
+        risk = abs(signal.entry - signal.stop)
+        if risk > SCORE_WATCH_TRADE_MAX_RISK_POINTS:
+            continue
+        if session_label(signal.bar_time) not in SCORE_WATCH_TRADE_SESSIONS:
+            continue
+        qualified.append(signal)
+
+    if not qualified:
+        return None, candidates
+
+    best = max(qualified, key=lambda item: ((item.score_total or 0), item.rr or 0.0, -abs(item.entry - item.stop)))
+    return replace(
+        best,
+        setup_type=best.setup_type.replace("관찰", "A급 모의매매"),
+        observation_type=None,
+        reasons=[
+            "score_watch A급 조건 통과: Render 모의매매 진입",
+            *best.reasons,
+        ],
+        cautions=[
+            caution for caution in best.cautions
+            if "실전 진입 신호가 아님" not in caution
+        ],
+    ), candidates
 
 
 def ny_orb_observation_candidates(bars: list[bot.Bar]) -> list[PaperSignal]:
@@ -1528,9 +1571,8 @@ def run_tick(state: dict[str, Any], symbol: str, interval: str, range_name: str,
             signal, observations = orb_paper_signal(bars, min_rr=min_rr)
             trade_min_level = 2
         elif name == "score_watch":
-            signal = None
-            observations = score_indicator_observation_candidates(bars)
-            trade_min_level = 99
+            signal, observations = score_indicator_trade_signal(bars, min_rr=min_rr)
+            trade_min_level = 2
         else:
             signal = None
             observations = []

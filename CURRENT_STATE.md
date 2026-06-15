@@ -1414,3 +1414,26 @@
 - 판단:
   - P라인은 폐기 대상이 아니라 재검증 대상.
   - 다음 복기에서는 P라인이 어느 세션/장세에서 반복 손실이 났는지 분리해서 본다.
+
+## 낙지 팀장 방 score_watch 모의매매 편입
+
+- 작업 시각: 2026-06-15 KST
+- 사용자 요청:
+  - `score_watch`도 매매에 넣어달라고 요청.
+- 반영:
+  - `score_watch`를 Render 실제 모의매매 전략 집합에 포함했다.
+  - 버전: `score_watch_v2_paper_a_only`
+  - 단, 전체 score 후보가 아니라 A급 후보만 실제 모의진입으로 승격한다.
+- A급 모의진입 조건:
+  - 점수 75점 이상.
+  - level 2 이상.
+  - RR 1.30 이상.
+  - 예상 위험폭 40pt 이하.
+  - 세션은 `EUROPE_TO_US_PRE`, `US_PREMARKET`, `US_REGULAR`만 허용.
+- 안전 기준:
+  - 여전히 실거래/자동주문 아님.
+  - B/C 후보는 관찰/후행 검증으로만 유지.
+  - `OFF_HOURS` 후보는 실제 모의진입으로 승격하지 않는다.
+- 검증:
+  - `python3 -m py_compile render_dual_paper_worker.py notion_trade_logger.py market_signal_bot.py` 통과.
+  - `score_watch`가 paper strategy 목록에 포함되고 버전이 갱신됨을 로컬 스모크 테스트로 확인.

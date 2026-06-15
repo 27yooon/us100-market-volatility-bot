@@ -89,18 +89,61 @@ def _join_list(value: Any) -> str:
     return "" if value is None else str(value)
 
 
+STRATEGY_LABELS = {
+    "zukkumi_original": "쭈꾸미 매매",
+    "indicator_basic": "중국 GitHub 참고 매매",
+    "orb_paper": "트레이시버크/ORB 매매",
+    "score_watch": "점수제 매매",
+}
+
+STRATEGY_NOTES = {
+    "zukkumi_original": "우리 P라인/라운딩/피봇 기반",
+    "indicator_basic": "TradingAgents-CN식 지표 참고를 5분봉용으로 단순화",
+    "orb_paper": "Stacey Burke식 박스/돌파실패/반대확장 아이디어와 ORB",
+    "score_watch": "EMA/RSI/MACD/Stochastic/ATR 점수화",
+}
+
+
+def _strategy_label(strategy: Any) -> str:
+    key = str(strategy or "")
+    return STRATEGY_LABELS.get(key, key or "-")
+
+
+def _strategy_note(strategy: Any) -> str:
+    return STRATEGY_NOTES.get(str(strategy or ""), "")
+
+
+def _strategy_header(record: dict[str, Any]) -> str:
+    strategy = record.get("strategy")
+    if not strategy and record.get("event") == "DAILY_REPORT":
+        return (
+            "전략 구분: "
+            "쭈꾸미 매매=zukkumi_original / "
+            "트레이시버크·ORB=orb_paper / "
+            "중국 GitHub 참고=indicator_basic / "
+            "점수제=score_watch"
+        )
+    label = _strategy_label(strategy)
+    note = _strategy_note(strategy)
+    if note:
+        return f"전략 구분: {label} ({strategy}) - {note}"
+    return f"전략 구분: {label} ({strategy or '-'})"
+
+
 def _daily_report_summary(record: dict[str, Any]) -> str:
     if record.get("event") != "DAILY_REPORT":
         return ""
     totals = record.get("totals") or {}
     lines = [
+        _strategy_header(record),
+        "",
         f"{record.get('report_title', '일일 보고')} / {record.get('report_date', '')}",
         f"총 진입 {int(totals.get('entries', 0))}회, 보유 {int(totals.get('open', 0))}건, 청산 {int(totals.get('closed', 0))}건",
         f"승패 {int(totals.get('wins', 0))}승 {int(totals.get('losses', 0))}패, 손익 {float(totals.get('pnl_points', 0.0)):+.2f}pt",
     ]
     for name, row in (record.get("strategies") or {}).items():
         lines.append(
-            f"{name}: 진입 {int(row.get('entries', 0))}회, "
+            f"{_strategy_label(name)} ({name}): 진입 {int(row.get('entries', 0))}회, "
             f"{int(row.get('wins', 0))}승 {int(row.get('losses', 0))}패, "
             f"{float(row.get('pnl_points', 0.0)):+.1f}pt"
         )
@@ -110,7 +153,7 @@ def _daily_report_summary(record: dict[str, Any]) -> str:
         lines.append("LOSS 복기")
         for item in loss_reviews[:12]:
             lines.append(
-                f"- {item.get('strategy')} {item.get('side')} "
+                f"- {_strategy_label(item.get('strategy'))} {item.get('side')} "
                 f"{float(item.get('pnl_points') or 0.0):+.1f}pt: "
                 f"{item.get('verdict')} ({item.get('reason')})"
             )
@@ -160,6 +203,7 @@ def build_properties(record: dict[str, Any]) -> dict[str, Any]:
     year_text, month_text = _date_parts(date_text)
     status = record.get("candidate_status") or record.get("result") or event or "기록"
     review_lines = [
+        _strategy_header(record),
         _daily_report_summary(record),
         record.get("review_summary"),
         _join_list(record.get("reasons")),

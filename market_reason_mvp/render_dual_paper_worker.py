@@ -1661,13 +1661,14 @@ def main() -> int:
     parser.add_argument("--reset", action="store_true")
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
+    symbol = bot.normalize_symbol(args.symbol)
 
     state = load_state(args.reset)
     append_event(
         {
             "event": "START",
             "mode": "render_dual_paper",
-            "symbol": args.symbol,
+            "symbol": symbol,
             "poll": args.poll,
             "telegram": "enabled_if_env_present",
             "strategy_versions": STRATEGY_VERSIONS,
@@ -1675,7 +1676,7 @@ def main() -> int:
     )
     while True:
         try:
-            run_tick(state, args.symbol, args.interval, args.range_name, args.min_rr)
+            run_tick(state, symbol, args.interval, args.range_name, args.min_rr)
         except Exception as exc:  # noqa: BLE001
             append_event({"event": "ERROR", "message": str(exc)})
         if args.once:

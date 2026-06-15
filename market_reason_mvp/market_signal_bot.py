@@ -18,6 +18,9 @@ import json
 import math
 import os
 import re
+import base64
+import socket
+import ssl
 import struct
 import sys
 import time
@@ -43,8 +46,18 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 KST = ZoneInfo("Asia/Seoul")
 YAHOO_CHART_BASE = "https://query1.finance.yahoo.com/v8/finance/chart"
+TRADINGVIEW_HOST = "data.tradingview.com"
+TRADINGVIEW_PATH = "/socket.io/websocket?from=chart%2F"
+TRADINGVIEW_SYMBOLS = {"CAPITALCOM:US100", "OANDA:NAS100USD", "PEPPERSTONE:NAS100", "SKILLING:US100"}
+SYMBOL_ALIASES = {
+    "NQ=F": "CAPITALCOM:US100",
+    "^NDX": "CAPITALCOM:US100",
+    "NDX": "CAPITALCOM:US100",
+    "US100": "CAPITALCOM:US100",
+    "NAS100": "CAPITALCOM:US100",
+}
 
-DEFAULT_SYMBOL = "NQ=F"
+DEFAULT_SYMBOL = "CAPITALCOM:US100"
 DEFAULT_INTERVAL = "5m"
 DEFAULT_RANGE = "5d"
 DEFAULT_MIN_LEVEL = 3
@@ -53,7 +66,7 @@ DEFAULT_POLL_SECONDS = 60
 DEFAULT_HEARTBEAT_MINUTES = 10
 
 CONTEXT_SYMBOLS: dict[str, str] = {
-    "NQ": "NQ=F",
+    "NAS100": "CAPITALCOM:US100",
     "QQQ": "QQQ",
     "VIX": "^VIX",
     "DXY": "DX-Y.NYB",
@@ -213,6 +226,9 @@ def load_env_file(path: Path) -> None:
 
 
 def fetch_chart(symbol: str, interval: str, range_name: str) -> dict[str, Any]:
+    symbol = normalize_symbol(symbol)
+    if symbol in TRADINGVIEW_SYMBOLS or ":" in symbol:
+        return fetch_tradingview_chart(symbol, interval, range_name)
     params = {"interval": interval, "range": range_name, "includePrePost": "true"}
     url = f"{YAHOO_CHART_BASE}/{symbol}?{urlencode(params)}"
     request = Request(
@@ -222,6 +238,236 @@ def fetch_chart(symbol: str, interval: str, range_name: str) -> dict[str, Any]:
     )
     with urlopen(request, timeout=20) as response:
         return json.loads(response.read().decode("utf-8", "replace"))
+
+
+def normalize_symbol(symbol: str) -> str:
+    return SYMBOL_ALIASES.get(str(symbol).strip().upper(), str(symbol).strip())
+
+
+def tradingview_interval(interval: str) -> str:
+    return {"5m": "5", "1d": "D", "1h": "60"}.get(interval, interval.replace("m", ""))
+
+
+def tradingview_count(interval: str, range_name: str) -> int:
+    match = re.match(r"^(\d+)([a-z]+)$", range_name.lower())
+    amount = int(match.group(1)) if match else 5
+    unit = match.group(2) if match else "d"
+    if interval == "1d":
+        return max(amount + 5, 20)
+    days = amount if unit == "d" else amount * 7 if unit == "wk" else amount * 30 if unit == "mo" else 5
+    if interval == "5m":
+        return min(max(days * 24 * 12, 300), 5000)
+    if interval == "1h":
+        return min(max(days * 24, 120), 5000)
+    return 500
+
+
+def websocket_connect() -> ssl.SSLSocket:
+    raw = socket.create_connection((TRADINGVIEW_HOST, 443), timeout=10)
+    sock = ssl.create_default_context().wrap_socket(raw, server_hostname=TRADINGVIEW_HOST)
+    key = base64.b64encode(os.urandom(16)).decode("ascii")
+    request = (
+        f"GET {TRADINGVIEW_PATH} HTTP/1.1\r\n"
+        f"Host: {TRADINGVIEW_HOST}\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        "Origin: https://www.tradingview.com\r\n"
+        "User-Agent: Mozilla/5.0\r\n"
+        f"Sec-WebSocket-Key: {key}\r\n"
+        "Sec-WebSocket-Version: 13\r\n\r\n"
+    )
+    sock.sendall(request.encode("ascii"))
+    response = b""
+    while b"\r\n\r\n" not in response:
+        chunk = sock.recv(4096)
+        if not chunk:
+            break
+        response += chunk
+    status_line = response.split(b"\r\n", 1)[0].decode("ascii", "replace")
+    if "101" not in status_line:
+        raise ValueError(f"tradingview_ws_failed:{status_line}")
+    sock.settimeout(10)
+    return sock
+
+
+def websocket_send_text(sock: ssl.SSLSocket, text: str) -> None:
+    payload = text.encode("utf-8")
+    header = bytearray([0x81])
+    length = len(payload)
+    if length < 126:
+        header.append(0x80 | length)
+    elif length < 65536:
+        header.append(0x80 | 126)
+        header.extend(struct.pack("!H", length))
+    else:
+        header.append(0x80 | 127)
+        header.extend(struct.pack("!Q", length))
+    mask = os.urandom(4)
+    header.extend(mask)
+    masked = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
+    sock.sendall(header + masked)
+
+
+def websocket_read_exact(sock: ssl.SSLSocket, length: int) -> bytes:
+    data = b""
+    while len(data) < length:
+        chunk = sock.recv(length - len(data))
+        if not chunk:
+            raise ValueError("tradingview_ws_closed")
+        data += chunk
+    return data
+
+
+def websocket_recv_text(sock: ssl.SSLSocket) -> str | None:
+    header = websocket_read_exact(sock, 2)
+    first, second = header
+    opcode = first & 0x0F
+    length = second & 0x7F
+    if length == 126:
+        length = struct.unpack("!H", websocket_read_exact(sock, 2))[0]
+    elif length == 127:
+        length = struct.unpack("!Q", websocket_read_exact(sock, 8))[0]
+    mask = websocket_read_exact(sock, 4) if second & 0x80 else None
+    payload = websocket_read_exact(sock, length) if length else b""
+    if mask:
+        payload = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
+    if opcode == 8:
+        return None
+    if opcode == 9:
+        return ""
+    return payload.decode("utf-8", "replace")
+
+
+def tradingview_frame(method: str, params: list[Any]) -> str:
+    raw = json.dumps({"m": method, "p": params}, separators=(",", ":"))
+    return f"~m~{len(raw)}~m~{raw}"
+
+
+def parse_tradingview_frames(text: str) -> list[str]:
+    frames: list[str] = []
+    index = 0
+    while index < len(text):
+        if not text.startswith("~m~", index):
+            next_index = text.find("~m~", index + 1)
+            if next_index == -1:
+                break
+            index = next_index
+            continue
+        index += 3
+        end = text.find("~m~", index)
+        if end == -1:
+            break
+        try:
+            length = int(text[index:end])
+        except ValueError:
+            break
+        start = end + 3
+        frames.append(text[start : start + length])
+        index = start + length
+    return frames
+
+
+def tradingview_session_id(prefix: str) -> str:
+    return f"{prefix}_{os.urandom(6).hex()}"
+
+
+def parse_tradingview_row(values: list[Any]) -> dict[str, Any] | None:
+    if len(values) < 5:
+        return None
+    try:
+        ts = int(float(values[0]))
+        return {
+            "ts": ts,
+            "open": float(values[1]),
+            "high": float(values[2]),
+            "low": float(values[3]),
+            "close": float(values[4]),
+            "volume": float(values[5]) if len(values) > 5 and values[5] is not None else 0.0,
+        }
+    except (TypeError, ValueError):
+        return None
+
+
+def fetch_tradingview_rows(symbol: str, interval: str, count: int) -> list[dict[str, Any]]:
+    sock = websocket_connect()
+    chart_session = tradingview_session_id("cs")
+    series_name = "s1"
+    commands = [
+        ("set_auth_token", ["unauthorized_user_token"]),
+        ("chart_create_session", [chart_session, ""]),
+        ("switch_timezone", [chart_session, "exchange"]),
+        (
+            "resolve_symbol",
+            [
+                chart_session,
+                "symbol_1",
+                "=" + json.dumps({"symbol": symbol, "adjustment": "splits", "session": "extended"}, separators=(",", ":")),
+            ],
+        ),
+        ("create_series", [chart_session, series_name, series_name, "symbol_1", tradingview_interval(interval), count, ""]),
+    ]
+    rows: list[dict[str, Any]] = []
+    try:
+        for method, params in commands:
+            websocket_send_text(sock, tradingview_frame(method, params))
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            text = websocket_recv_text(sock)
+            if text is None:
+                break
+            for frame in parse_tradingview_frames(text):
+                if frame.startswith("~h~"):
+                    websocket_send_text(sock, f"~m~{len(frame)}~m~{frame}")
+                    continue
+                try:
+                    message = json.loads(frame)
+                except json.JSONDecodeError:
+                    continue
+                method = message.get("m")
+                params = message.get("p") or []
+                if method == "timescale_update" and len(params) >= 2:
+                    series = ((params[1] or {}).get(series_name) or {}).get("s") or []
+                    parsed = [row for item in series if (row := parse_tradingview_row(item.get("v") or []))]
+                    if parsed:
+                        rows = parsed
+                elif method in {"critical_error", "protocol_error"}:
+                    raise ValueError(json.dumps(message, ensure_ascii=False))
+            if rows:
+                break
+    finally:
+        try:
+            sock.close()
+        except Exception:
+            pass
+    if not rows:
+        raise ValueError(f"tradingview_no_rows:{symbol}:{interval}:{count}")
+    return rows
+
+
+def fetch_tradingview_chart(symbol: str, interval: str, range_name: str) -> dict[str, Any]:
+    rows = fetch_tradingview_rows(symbol, interval, tradingview_count(interval, range_name))
+    return {
+        "chart": {
+            "result": [
+                {
+                    "meta": {"symbol": symbol, "instrumentType": "cfd", "exchangeName": symbol.split(":", 1)[0]},
+                    "timestamp": [row["ts"] for row in rows],
+                    "indicators": {
+                        "quote": [
+                            {
+                                "open": [row["open"] for row in rows],
+                                "high": [row["high"] for row in rows],
+                                "low": [row["low"] for row in rows],
+                                "close": [row["close"] for row in rows],
+                                "volume": [row["volume"] for row in rows],
+                            }
+                        ]
+                    },
+                }
+            ],
+            "error": None,
+        }
+    }
 
 
 def parse_bars(payload: dict[str, Any]) -> list[Bar]:

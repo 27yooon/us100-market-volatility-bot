@@ -151,7 +151,7 @@ def strategy_display_name(name: str | None) -> str:
         "zukkumi_original": "쭈꾸미 원본",
         "indicator_basic": "기본지표",
         "orb_paper": "오픈박스 매매",
-        "score_watch": "점수제 관찰",
+        "score_watch": "점수제 매매",
     }.get(str(name), str(name or "-"))
 
 
@@ -1393,6 +1393,44 @@ def report_date(now: datetime, report_type: str) -> str:
     return now.date().isoformat()
 
 
+def loss_review_item(strategy: str, trade: dict[str, Any]) -> dict[str, Any]:
+    rr = float(trade.get("rr") or 0.0)
+    level = int(trade.get("level") or 0)
+    risk = abs(float(trade.get("entry", 0.0)) - float(trade.get("stop", 0.0)))
+    score = trade.get("score_total")
+    cautions = trade.get("cautions") or []
+    if not isinstance(cautions, list):
+        cautions = [str(cautions)]
+
+    acceptable = rr >= 1.30 and level >= 2
+    notes: list[str] = []
+    if acceptable:
+        notes.append("기본 진입 기준 통과")
+    else:
+        notes.append("기본 기준 약함")
+    if strategy == "score_watch" and score is not None:
+        notes.append(f"점수 {int(score)}")
+        acceptable = acceptable and int(score) >= SCORE_WATCH_TRADE_MIN_SCORE and risk <= SCORE_WATCH_TRADE_MAX_RISK_POINTS
+    if risk:
+        notes.append(f"위험폭 {risk:.1f}pt")
+    if cautions:
+        notes.append("주의 " + " / ".join(str(item) for item in cautions[:2]))
+
+    return {
+        "strategy": strategy,
+        "side": trade.get("side"),
+        "setup": trade.get("setup_type"),
+        "opened_at": trade.get("opened_at_text"),
+        "closed_at": trade.get("closed_at_text"),
+        "entry": trade.get("entry"),
+        "exit_price": trade.get("exit_price"),
+        "pnl_points": round(float(trade.get("pnl_points", 0.0)), 2),
+        "rr": rr,
+        "verdict": "충분히 진입 가능" if acceptable else "기준 약함/확인 필요",
+        "reason": ", ".join(notes),
+    }
+
+
 def build_daily_report(
     strategies: dict[str, dict[str, Any]],
     report_type: str,
@@ -1402,6 +1440,7 @@ def build_daily_report(
 ) -> dict[str, Any]:
     strategy_rows: dict[str, Any] = {}
     latest: list[dict[str, Any]] = []
+    loss_reviews: list[dict[str, Any]] = []
     totals = {"entries": 0, "closed": 0, "open": 0, "wins": 0, "losses": 0, "pnl_points": 0.0}
 
     for name, strategy_state in strategies.items():
@@ -1463,6 +1502,10 @@ def build_daily_report(
                 "closed_at": trade.get("closed_at_text"),
                 "pnl_points": trade.get("pnl_points"),
             })
+        if report_type == "FINAL_0610":
+            for trade in closed:
+                if trade.get("result") == "LOSS":
+                    loss_reviews.append(loss_review_item(name, trade))
 
     totals["pnl_points"] = round(float(totals["pnl_points"]), 2)
     latest.sort(key=lambda item: str(item.get("closed_at") or item.get("opened_at") or ""), reverse=True)
@@ -1477,6 +1520,7 @@ def build_daily_report(
         "totals": totals,
         "strategies": strategy_rows,
         "latest": latest[:8],
+        "loss_reviews": loss_reviews[:12],
     }
 
 
@@ -1500,12 +1544,16 @@ def format_daily_report_telegram(record: dict[str, Any]) -> str:
             f"- {display}: 진입 {int(row.get('entries', 0))}, 보유 {int(bool(row.get('open')))}, "
             f"{int(row.get('wins', 0))}승 {int(row.get('losses', 0))}패, {float(row.get('pnl_points', 0.0)):+.1f}pt"
         )
-        if int(row.get("candidate_reviewed", 0)):
-            line += (
-                f" / 후보복기 놓친 {int(row.get('missed_entries', 0))}, "
-                f"필터성공 {int(row.get('filtered_ok', 0))}, 애매 {int(row.get('ambiguous', 0))}"
-            )
         lines.append(line)
+    loss_reviews = record.get("loss_reviews") or []
+    if loss_reviews:
+        lines.extend(["", "LOSS 복기:"])
+        for item in loss_reviews[:5]:
+            lines.append(
+                f"- {strategy_display_name(item.get('strategy'))} {item.get('side')} "
+                f"{float(item.get('pnl_points') or 0.0):+.1f}pt: {item.get('verdict')} "
+                f"({item.get('reason')})"
+            )
     latest = record.get("latest") or []
     if latest:
         lines.extend(["", "최근 거래:"])

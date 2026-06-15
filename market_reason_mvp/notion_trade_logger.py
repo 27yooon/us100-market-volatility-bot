@@ -99,13 +99,20 @@ def _daily_report_summary(record: dict[str, Any]) -> str:
         f"승패 {int(totals.get('wins', 0))}승 {int(totals.get('losses', 0))}패, 손익 {float(totals.get('pnl_points', 0.0)):+.2f}pt",
     ]
     for name, row in (record.get("strategies") or {}).items():
-        if row.get("mode") == "watch_only":
-            lines.append(f"{name}: 관찰 후보 {int(row.get('candidates', 0))}건")
-        else:
+        lines.append(
+            f"{name}: 진입 {int(row.get('entries', 0))}회, "
+            f"{int(row.get('wins', 0))}승 {int(row.get('losses', 0))}패, "
+            f"{float(row.get('pnl_points', 0.0)):+.1f}pt"
+        )
+    loss_reviews = record.get("loss_reviews") or []
+    if loss_reviews:
+        lines.append("")
+        lines.append("LOSS 복기")
+        for item in loss_reviews[:12]:
             lines.append(
-                f"{name}: 진입 {int(row.get('entries', 0))}회, "
-                f"{int(row.get('wins', 0))}승 {int(row.get('losses', 0))}패, "
-                f"{float(row.get('pnl_points', 0.0)):+.1f}pt"
+                f"- {item.get('strategy')} {item.get('side')} "
+                f"{float(item.get('pnl_points') or 0.0):+.1f}pt: "
+                f"{item.get('verdict')} ({item.get('reason')})"
             )
     return "\n".join(lines)
 

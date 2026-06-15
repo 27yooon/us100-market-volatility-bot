@@ -206,8 +206,12 @@ def append_event(record: dict[str, Any]) -> None:
     if record.get("event") == "HEARTBEAT" and record.get("today_status"):
         print(format_today_status_line(record["today_status"]), flush=True)
     send_telegram_for_event(record)
-    if notion_trade_logger.enabled():
+    if should_send_to_notion(record) and notion_trade_logger.enabled():
         notion_trade_logger.send(record)
+
+
+def should_send_to_notion(record: dict[str, Any]) -> bool:
+    return record.get("event") in {"OPEN", "CLOSE", "DAILY_REPORT", "ERROR"}
 
 
 def telegram_enabled() -> bool:
@@ -1401,20 +1405,6 @@ def build_daily_report(
     totals = {"entries": 0, "closed": 0, "open": 0, "wins": 0, "losses": 0, "pnl_points": 0.0}
 
     for name, strategy_state in strategies.items():
-        if name == "score_watch":
-            candidates = [
-                candidate for candidate in strategy_state.get("watch_candidates", [])
-                if trade_date_text(candidate, "observed_at_text") == report_date_text
-            ]
-            strategy_rows[name] = {
-                "mode": "watch_only",
-                "candidates": len(candidates),
-                "missed_entries": sum(1 for candidate in candidates if candidate.get("candidate_result") == "MISSED_ENTRY"),
-                "filtered_ok": sum(1 for candidate in candidates if candidate.get("candidate_result") == "FILTERED_OK"),
-                "ambiguous": sum(1 for candidate in candidates if candidate.get("candidate_result") == "AMBIGUOUS"),
-            }
-            continue
-
         open_trade_data = strategy_state.get("open_trade")
         open_in_session = bool(open_trade_data and session_date_from_trade(open_trade_data) == report_date_text)
         closed = [
@@ -1429,6 +1419,9 @@ def build_daily_report(
         losses = sum(1 for trade in closed if trade.get("result") == "LOSS")
         pnl = sum(float(trade.get("pnl_points", 0.0)) for trade in closed)
         entries = len(closed) + (1 if open_in_session else 0)
+        missed_entries = sum(1 for candidate in candidates if candidate.get("candidate_result") == "MISSED_ENTRY")
+        filtered_ok = sum(1 for candidate in candidates if candidate.get("candidate_result") == "FILTERED_OK")
+        ambiguous = sum(1 for candidate in candidates if candidate.get("candidate_result") == "AMBIGUOUS")
         row = {
             "mode": "paper_trade",
             "entries": entries,
@@ -1438,9 +1431,10 @@ def build_daily_report(
             "losses": losses,
             "pnl_points": round(pnl, 2),
             "candidate_open": sum(1 for candidate in candidates if not candidate.get("candidate_result")),
-            "missed_entries": sum(1 for candidate in candidates if candidate.get("candidate_result") == "MISSED_ENTRY"),
-            "filtered_ok": sum(1 for candidate in candidates if candidate.get("candidate_result") == "FILTERED_OK"),
-            "ambiguous": sum(1 for candidate in candidates if candidate.get("candidate_result") == "AMBIGUOUS"),
+            "missed_entries": missed_entries,
+            "filtered_ok": filtered_ok,
+            "ambiguous": ambiguous,
+            "candidate_reviewed": missed_entries + filtered_ok + ambiguous,
         }
         strategy_rows[name] = row
         totals["entries"] += entries
@@ -1502,15 +1496,16 @@ def format_daily_report_telegram(record: dict[str, Any]) -> str:
     ]
     for name, row in (record.get("strategies") or {}).items():
         display = strategy_display_name(name)
-        if row.get("mode") == "watch_only":
-            lines.append(
-                f"- {display}: 관찰 후보 {int(row.get('candidates', 0))}건, 놓친 {int(row.get('missed_entries', 0))}, 통과필터 {int(row.get('filtered_ok', 0))}"
+        line = (
+            f"- {display}: 진입 {int(row.get('entries', 0))}, 보유 {int(bool(row.get('open')))}, "
+            f"{int(row.get('wins', 0))}승 {int(row.get('losses', 0))}패, {float(row.get('pnl_points', 0.0)):+.1f}pt"
+        )
+        if int(row.get("candidate_reviewed", 0)):
+            line += (
+                f" / 후보복기 놓친 {int(row.get('missed_entries', 0))}, "
+                f"필터성공 {int(row.get('filtered_ok', 0))}, 애매 {int(row.get('ambiguous', 0))}"
             )
-        else:
-            lines.append(
-                f"- {display}: 진입 {int(row.get('entries', 0))}, 보유 {int(bool(row.get('open')))}, "
-                f"{int(row.get('wins', 0))}승 {int(row.get('losses', 0))}패, {float(row.get('pnl_points', 0.0)):+.1f}pt"
-            )
+        lines.append(line)
     latest = record.get("latest") or []
     if latest:
         lines.extend(["", "최근 거래:"])

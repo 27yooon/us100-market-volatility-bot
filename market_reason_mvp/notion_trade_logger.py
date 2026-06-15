@@ -175,7 +175,7 @@ def _event_title(record: dict[str, Any]) -> str:
     result = record.get("result") or record.get("candidate_result") or ""
     ts = record.get("opened_at_text") or record.get("closed_at_text") or record.get("logged_at") or ""
     setup = record.get("setup_type") or record.get("mode") or "상태 확인"
-    parts = [str(ts), str(event), str(strategy)]
+    parts = [str(ts), str(event), _strategy_label(strategy)]
     if side != "-":
         parts.append(str(side))
     parts.append(str(setup))
@@ -189,6 +189,7 @@ def build_properties(record: dict[str, Any]) -> dict[str, Any]:
     z_summary = summaries.get("zukkumi_original") or summaries.get("zukkumi_rules") or {}
     p_summary = summaries.get("indicator_basic") or summaries.get("public_indicator_rules") or {}
     strategy = record.get("strategy") or "render"
+    strategy_label = _strategy_label(strategy)
     event = record.get("event")
     opened_at = record.get("opened_at_text")
     closed_at = record.get("closed_at_text")
@@ -219,7 +220,7 @@ def build_properties(record: dict[str, Any]) -> dict[str, Any]:
         "날짜": _date(date_text),
         "연도": {"rich_text": _plain_text(year_text)},
         "월": {"rich_text": _plain_text(month_text)},
-        "전략": _select(strategy),
+        "전략": _select(strategy_label),
         "매매법 구분": _select(event or record.get("mode") or "상태 확인"),
         "종목": {"rich_text": _plain_text(record.get("symbol"))},
         "포지션": _select(record.get("side") or "-"),

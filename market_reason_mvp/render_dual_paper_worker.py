@@ -160,7 +160,7 @@ def score_watch_follow_note(grade: str | None) -> str:
 
 def strategy_display_name(name: str | None) -> str:
     return {
-        "zukkumi_original": "쭈꾸미 원본",
+        "zukkumi_original": "쭈꾸미 매매",
         "indicator_basic": "기본지표",
         "orb_paper": "버크매매",
         "score_watch": "점수제 매매",

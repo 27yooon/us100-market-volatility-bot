@@ -92,14 +92,14 @@ def _join_list(value: Any) -> str:
 STRATEGY_LABELS = {
     "zukkumi_original": "쭈꾸미 매매",
     "indicator_basic": "중국 GitHub 참고 매매",
-    "orb_paper": "트레이시버크/ORB 매매",
+    "orb_paper": "버크매매",
     "score_watch": "점수제 매매",
 }
 
 STRATEGY_NOTES = {
     "zukkumi_original": "우리 P라인/라운딩/피봇 기반",
     "indicator_basic": "TradingAgents-CN식 지표 참고를 5분봉용으로 단순화",
-    "orb_paper": "Stacey Burke식 박스/돌파실패/반대확장 아이디어와 ORB",
+    "orb_paper": "버크식 박스/돌파실패/반대확장 아이디어와 ORB",
     "score_watch": "EMA/RSI/MACD/Stochastic/ATR 점수화",
 }
 
@@ -119,7 +119,7 @@ def _strategy_header(record: dict[str, Any]) -> str:
         return (
             "전략 구분: "
             "쭈꾸미 매매=zukkumi_original / "
-            "트레이시버크·ORB=orb_paper / "
+            "버크매매=orb_paper / "
             "중국 GitHub 참고=indicator_basic / "
             "점수제=score_watch"
         )

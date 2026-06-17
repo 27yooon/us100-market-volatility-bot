@@ -24,7 +24,7 @@
 |---|---|---|---|
 | 쭈꾸미 원본 | `zukkumi_original` | 우리가 만든 P라인/라운딩/피봇/EMA 기준 | 실제 모의매매 |
 | 기본지표 | `indicator_basic` | Bollinger/EMA/RSI/ATR 기본 비교군 | 실제 모의매매 |
-| 오픈박스 매매 | `orb_paper` | NY 오픈 22:30~23:00 KST ORB/Initial Balance | 실제 모의매매 |
+| 버크매매 | `orb_paper` | NY 오픈 22:30~23:00 KST ORB/Initial Balance | 실제 모의매매 |
 | 점수제 관찰 | `score_watch` | EMA/RSI/MACD/Stochastic/ATR 점수 후보 | 관찰 전용 |
 
 ## 앱 핵심 화면

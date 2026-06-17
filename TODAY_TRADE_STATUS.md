@@ -36,12 +36,12 @@ https://dashboard.render.com/worker/srv-d8eomv6k1jcs73a6vro0/logs
 |---|---|
 | `zukkumi_original` | 쭈꾸미 원본 |
 | `indicator_basic` | 기본지표 |
-| `orb_paper` | 오픈박스 매매 |
+| `orb_paper` | 버크매매 |
 | `score_watch` | 점수제 관찰. 실제 매매 아님 |
 
 ## 주의
 
 - `score_watch`는 관찰용이므로 진입 수가 있어도 실제 모의매매 진입으로 보지 않는다.
-- 실제 모의매매 여부는 `쭈꾸미 원본`, `기본지표`, `오픈박스 매매`를 기준으로 본다.
+- 실제 모의매매 여부는 `쭈꾸미 원본`, `기본지표`, `버크매매`를 기준으로 본다.
 - Render heartbeat가 멈추면 오늘 상태도 갱신되지 않는다.
 

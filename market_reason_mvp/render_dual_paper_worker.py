@@ -156,7 +156,7 @@ def strategy_display_name(name: str | None) -> str:
     return {
         "zukkumi_original": "쭈꾸미 원본",
         "indicator_basic": "기본지표",
-        "orb_paper": "오픈박스 매매",
+        "orb_paper": "버크매매",
         "score_watch": "점수제 매매",
     }.get(str(name), str(name or "-"))
 
@@ -1079,7 +1079,7 @@ def orb_paper_signal(bars: list[bot.Bar], min_rr: float) -> tuple[PaperSignal | 
         .replace("ORB", "오픈박스")
     )
     reasons = [
-        "오픈박스 매매 기준 통과",
+        "버크매매 기준 통과",
         *best.reasons,
     ]
     cautions = [

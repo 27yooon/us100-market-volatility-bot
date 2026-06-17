@@ -33,11 +33,17 @@ STRATEGY_VERSIONS = {
 }
 
 PAPER_TRADE_STRATEGIES = {"zukkumi_original", "indicator_basic", "orb_paper", "score_watch"}
-SCORE_WATCH_TRADE_MIN_SCORE = 75
-SCORE_WATCH_TRADE_MIN_RR = 1.30
-SCORE_WATCH_TRADE_MAX_RISK_POINTS = 40.0
+SCORE_WATCH_TRADE_MIN_SCORE = 85
+SCORE_WATCH_TRADE_MIN_RR = 1.50
+SCORE_WATCH_TRADE_MAX_RISK_POINTS = 35.0
 SCORE_WATCH_TRADE_SESSIONS = {"EUROPE_TO_US_PRE", "US_PREMARKET", "US_REGULAR"}
 LOSS_COOLDOWN_SECONDS = 15 * 60
+DAILY_STRATEGY_MAX_LOSSES = 2
+DAILY_STRATEGY_STOP_LOSS_POINTS = -70.0
+DAILY_GLOBAL_MAX_LOSSES = 4
+DAILY_GLOBAL_STOP_LOSS_POINTS = -120.0
+MOMENTUM_PROTECT_MIN_POINTS = 30.0
+MOMENTUM_PROTECT_RISK_MULTIPLE = 0.9
 ROUNDING_PROTECT_MIN_POINTS = 20.0
 ROUNDING_PROTECT_RISK_MULTIPLE = 0.8
 ROUNDING_FAILURE_CHECK_BARS = 2
@@ -919,6 +925,11 @@ def score_indicator_trade_signal(bars: list[bot.Bar], min_rr: float) -> tuple[Pa
     for signal in candidates:
         if signal.quality_tier != "A":
             continue
+        breakdown = signal.score_breakdown or {}
+        if int(breakdown.get("ema20_50") or 0) <= 0:
+            continue
+        if int(breakdown.get("macd") or 0) <= 0:
+            continue
         if (signal.score_total or 0) < SCORE_WATCH_TRADE_MIN_SCORE:
             continue
         if (signal.rr or 0.0) < max(min_rr, SCORE_WATCH_TRADE_MIN_RR):
@@ -1179,6 +1190,35 @@ def rounding_failure_exit_reason(trade: dict[str, Any], history: list[bot.Bar]) 
     return None
 
 
+def momentum_profit_exit_reason(trade: dict[str, Any], history: list[bot.Bar]) -> str | None:
+    if str(trade.get("strategy_version") or "").startswith("zukkumi_original"):
+        return None
+    if len(history) < 5:
+        return None
+
+    current = history[-1]
+    previous = history[-2]
+    profit = trade_profit_points(trade, current.close)
+    risk = trade_risk_points(trade)
+    protect_trigger = max(MOMENTUM_PROTECT_MIN_POINTS, risk * MOMENTUM_PROTECT_RISK_MULTIPLE)
+    if profit < protect_trigger:
+        return None
+
+    recent = history[-4:]
+    if trade["side"] == "LONG":
+        no_new_extreme = current.high <= max(bar.high for bar in recent[:-1])
+        opposite_close = current.close < previous.close
+        body_reversal = current.close < current.open and abs(current.close - current.open) >= abs(previous.close - previous.open) * 0.7
+    else:
+        no_new_extreme = current.low >= min(bar.low for bar in recent[:-1])
+        opposite_close = current.close > previous.close
+        body_reversal = current.close > current.open and abs(current.close - current.open) >= abs(previous.close - previous.open) * 0.7
+
+    if no_new_extreme and (opposite_close or body_reversal):
+        return f"momentum profit protection: +{profit:.1f}pt and follow-through stalled"
+    return None
+
+
 def update_open_trade(strategy: str, state: dict[str, Any], bars: list[bot.Bar]) -> None:
     trade = state.get("open_trade")
     if not trade:
@@ -1194,6 +1234,10 @@ def update_open_trade(strategy: str, state: dict[str, Any], bars: list[bot.Bar])
             if profit_exit:
                 close_trade(strategy, state, trade, "WIN", bar.close, bar.ts, profit_exit)
                 return
+            momentum_exit = momentum_profit_exit_reason(trade, history)
+            if momentum_exit:
+                close_trade(strategy, state, trade, "WIN", bar.close, bar.ts, momentum_exit)
+                return
             if bar.close < trade["stop"]:
                 close_trade(strategy, state, trade, "LOSS", bar.close, bar.ts, "5m close below stop")
                 return
@@ -1208,6 +1252,10 @@ def update_open_trade(strategy: str, state: dict[str, Any], bars: list[bot.Bar])
             profit_exit = rounding_profit_exit_reason(trade, history)
             if profit_exit:
                 close_trade(strategy, state, trade, "WIN", bar.close, bar.ts, profit_exit)
+                return
+            momentum_exit = momentum_profit_exit_reason(trade, history)
+            if momentum_exit:
+                close_trade(strategy, state, trade, "WIN", bar.close, bar.ts, momentum_exit)
                 return
             if bar.close > trade["stop"]:
                 close_trade(strategy, state, trade, "LOSS", bar.close, bar.ts, "5m close above stop")
@@ -1231,15 +1279,60 @@ def candidate_filter_reason(signal: PaperSignal, trade_min_level: int, trade_min
     return ", ".join(reasons)
 
 
+def closed_trades_for_date(strategy_state: dict[str, Any], date_text: str) -> list[dict[str, Any]]:
+    return [
+        trade for trade in strategy_state.get("closed_trades", [])
+        if trade_date_text(trade, "opened_at_text") == date_text or trade_date_text(trade, "closed_at_text") == date_text
+    ]
+
+
+def daily_risk_block_reason(strategy: str, strategy_state: dict[str, Any], latest_bar_ts: int | None) -> str | None:
+    if latest_bar_ts is None:
+        return None
+    date_text = text_time(latest_bar_ts)[:10]
+    closed = closed_trades_for_date(strategy_state, date_text)
+    losses = sum(1 for trade in closed if trade.get("result") == "LOSS")
+    pnl = sum(float(trade.get("pnl_points", 0.0) or 0.0) for trade in closed)
+    if losses >= DAILY_STRATEGY_MAX_LOSSES:
+        return f"{strategy} daily loss-count stop: {losses} losses on {date_text}"
+    if pnl <= DAILY_STRATEGY_STOP_LOSS_POINTS:
+        return f"{strategy} daily pnl stop: {pnl:+.1f}pt on {date_text}"
+    return None
+
+
+def global_daily_risk_block_reason(strategies: dict[str, dict[str, Any]], latest_bar_ts: int | None) -> str | None:
+    if latest_bar_ts is None:
+        return None
+    date_text = text_time(latest_bar_ts)[:10]
+    closed = [
+        trade
+        for strategy_state in strategies.values()
+        for trade in closed_trades_for_date(strategy_state, date_text)
+    ]
+    losses = sum(1 for trade in closed if trade.get("result") == "LOSS")
+    pnl = sum(float(trade.get("pnl_points", 0.0) or 0.0) for trade in closed)
+    if losses >= DAILY_GLOBAL_MAX_LOSSES:
+        return f"global daily loss-count stop: {losses} losses on {date_text}"
+    if pnl <= DAILY_GLOBAL_STOP_LOSS_POINTS:
+        return f"global daily pnl stop: {pnl:+.1f}pt on {date_text}"
+    return None
+
+
 def entry_block_reason(
     strategy: str,
     strategy_state: dict[str, Any],
     signal: PaperSignal | None,
     latest_bar_ts: int | None,
     global_loss_bar: int | None,
+    global_risk_block: str | None,
 ) -> str | None:
     if latest_bar_ts is None:
         return None
+    if global_risk_block:
+        return global_risk_block
+    daily_block = daily_risk_block_reason(strategy, strategy_state, latest_bar_ts)
+    if daily_block:
+        return daily_block
     if global_loss_bar == latest_bar_ts:
         return "same 5m bar after stop loss"
     cooldown_until = strategy_state.get("cooldown_until")
@@ -1742,6 +1835,7 @@ def run_tick(state: dict[str, Any], symbol: str, interval: str, range_name: str,
             if strategy_state.get("last_loss_bar") == latest_bar_ts:
                 global_loss_bar = latest_bar_ts
                 break
+    global_risk_block = global_daily_risk_block_reason(strategies, latest_bar_ts)
 
     for name, strategy_state in strategies.items():
         if strategy_state.get("open_trade"):
@@ -1779,7 +1873,7 @@ def run_tick(state: dict[str, Any], symbol: str, interval: str, range_name: str,
                     filter_reason=candidate_filter_reason(observation, trade_min_level=trade_min_level, trade_min_rr=min_rr),
                 )
             continue
-        block_reason = entry_block_reason(name, strategy_state, signal, latest_bar_ts, global_loss_bar)
+        block_reason = entry_block_reason(name, strategy_state, signal, latest_bar_ts, global_loss_bar, global_risk_block)
         if block_reason:
             append_event({
                 "strategy": name,

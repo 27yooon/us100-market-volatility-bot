@@ -37,6 +37,9 @@ SCORE_WATCH_TRADE_MIN_SCORE = 75
 SCORE_WATCH_TRADE_MIN_RR = 1.30
 SCORE_WATCH_TRADE_MAX_RISK_POINTS = 40.0
 SCORE_WATCH_TRADE_SESSIONS = {"EUROPE_TO_US_PRE", "US_PREMARKET", "US_REGULAR"}
+LOSS_COOLDOWN_SECONDS = 15 * 60
+ROUNDING_PROTECT_MIN_POINTS = 20.0
+ROUNDING_PROTECT_RISK_MULTIPLE = 0.8
 
 LEGACY_STRATEGY_NAMES = {
     "zukkumi_rules": "zukkumi_original",
@@ -250,6 +253,10 @@ def initial_strategy_state(name: str | None = None) -> dict[str, Any]:
         "seen_signal_keys": [],
         "watch_candidates": [],
         "seen_candidate_keys": [],
+        "cooldown_until": None,
+        "last_closed_bar": None,
+        "last_loss_bar": None,
+        "last_loss_side": None,
         "strategy_version": strategy_version(name or ""),
     }
 
@@ -282,6 +289,10 @@ def ensure_strategy_state(state: dict[str, Any]) -> None:
             strategies[name] = initial_strategy_state(name)
         strategies[name].setdefault("watch_candidates", [])
         strategies[name].setdefault("seen_candidate_keys", [])
+        strategies[name].setdefault("cooldown_until", None)
+        strategies[name].setdefault("last_closed_bar", None)
+        strategies[name].setdefault("last_loss_bar", None)
+        strategies[name].setdefault("last_loss_side", None)
         strategies[name]["strategy_version"] = strategy_version(name)
 
 
@@ -1082,15 +1093,70 @@ def orb_paper_signal(bars: list[bot.Bar], min_rr: float) -> tuple[PaperSignal | 
     ), candidates
 
 
+def trade_profit_points(trade: dict[str, Any], price: float) -> float:
+    if trade["side"] == "LONG":
+        return price - float(trade["entry"])
+    return float(trade["entry"]) - price
+
+
+def trade_risk_points(trade: dict[str, Any]) -> float:
+    return abs(float(trade["entry"]) - float(trade["stop"]))
+
+
+def is_rounding_trade(trade: dict[str, Any]) -> bool:
+    return "라운딩" in str(trade.get("setup_type") or "")
+
+
+def rounding_profit_exit_reason(trade: dict[str, Any], history: list[bot.Bar]) -> str | None:
+    if not is_rounding_trade(trade) or len(history) < 6:
+        return None
+
+    current = history[-1]
+    profit = trade_profit_points(trade, current.close)
+    risk = trade_risk_points(trade)
+    protect_trigger = max(ROUNDING_PROTECT_MIN_POINTS, risk * ROUNDING_PROTECT_RISK_MULTIPLE)
+    if profit < protect_trigger:
+        return None
+
+    recent = history[-3:]
+    previous = history[-8:-3] or history[:-3]
+    if not previous:
+        return None
+
+    recent_ranges = [max(bar.high - bar.low, 0.01) for bar in recent]
+    previous_ranges = [max(bar.high - bar.low, 0.01) for bar in previous]
+    recent_bodies = [abs(bar.close - bar.open) for bar in recent]
+    previous_body_avg = sum(abs(bar.close - bar.open) for bar in previous) / len(previous)
+    previous_range_avg = sum(previous_ranges) / len(previous_ranges)
+
+    range_shrinking = sum(recent_ranges) / len(recent_ranges) <= previous_range_avg * 0.75
+    body_shrinking = sum(recent_bodies) / len(recent_bodies) <= previous_body_avg * 0.75
+    consecutive_body_shrink = recent_bodies[-1] <= recent_bodies[-2] <= recent_bodies[-3]
+
+    if trade["side"] == "LONG":
+        stalled = current.close <= history[-2].close or current.high <= max(bar.high for bar in history[-4:-1])
+    else:
+        stalled = current.close >= history[-2].close or current.low >= min(bar.low for bar in history[-4:-1])
+
+    if stalled and (range_shrinking or body_shrinking or consecutive_body_shrink):
+        return f"rounding profit protection: +{profit:.1f}pt and candles shrinking"
+    return None
+
+
 def update_open_trade(strategy: str, state: dict[str, Any], bars: list[bot.Bar]) -> None:
     trade = state.get("open_trade")
     if not trade:
         return
     future = [bar for bar in bars if bar.ts > trade["opened_at"]]
     for bar in future:
+        history = [item for item in bars if item.ts <= bar.ts]
         if trade["side"] == "LONG":
             if bar.high >= trade["target"]:
                 close_trade(strategy, state, trade, "WIN", trade["target"], bar.ts, "+50pt target hit")
+                return
+            profit_exit = rounding_profit_exit_reason(trade, history)
+            if profit_exit:
+                close_trade(strategy, state, trade, "WIN", bar.close, bar.ts, profit_exit)
                 return
             if bar.close < trade["stop"]:
                 close_trade(strategy, state, trade, "LOSS", bar.close, bar.ts, "5m close below stop")
@@ -1098,6 +1164,10 @@ def update_open_trade(strategy: str, state: dict[str, Any], bars: list[bot.Bar])
         else:
             if bar.low <= trade["target"]:
                 close_trade(strategy, state, trade, "WIN", trade["target"], bar.ts, "+50pt target hit")
+                return
+            profit_exit = rounding_profit_exit_reason(trade, history)
+            if profit_exit:
+                close_trade(strategy, state, trade, "WIN", bar.close, bar.ts, profit_exit)
                 return
             if bar.close > trade["stop"]:
                 close_trade(strategy, state, trade, "LOSS", bar.close, bar.ts, "5m close above stop")
@@ -1115,6 +1185,25 @@ def candidate_filter_reason(signal: PaperSignal, trade_min_level: int, trade_min
     if not reasons:
         reasons.append("strategy filter or duplicate/open trade")
     return ", ".join(reasons)
+
+
+def entry_block_reason(
+    strategy: str,
+    strategy_state: dict[str, Any],
+    signal: PaperSignal | None,
+    latest_bar_ts: int | None,
+    global_loss_bar: int | None,
+) -> str | None:
+    if latest_bar_ts is None:
+        return None
+    if global_loss_bar == latest_bar_ts:
+        return "same 5m bar after stop loss"
+    cooldown_until = strategy_state.get("cooldown_until")
+    if isinstance(cooldown_until, (int, float)) and latest_bar_ts <= int(cooldown_until):
+        if signal is not None and signal.side == strategy_state.get("last_loss_side"):
+            return f"{strategy} same-side loss cooldown until {text_time(int(cooldown_until))}"
+        return f"{strategy} loss cooldown until {text_time(int(cooldown_until))}"
+    return None
 
 
 def open_candidate(
@@ -1258,6 +1347,11 @@ def close_trade(
     }
     state["closed_trades"] = [*state.get("closed_trades", []), closed]
     state["open_trade"] = None
+    state["last_closed_bar"] = closed_at
+    if result == "LOSS":
+        state["cooldown_until"] = closed_at + LOSS_COOLDOWN_SECONDS
+        state["last_loss_bar"] = closed_at
+        state["last_loss_side"] = trade.get("side")
     append_event({"strategy": strategy, "event": "CLOSE", **closed})
 
 
@@ -1596,6 +1690,16 @@ def run_tick(state: dict[str, Any], symbol: str, interval: str, range_name: str,
     for name, strategy_state in strategies.items():
         update_open_trade(name, strategy_state, bars)
         update_watch_candidates(name, strategy_state, bars)
+
+    latest_bar_ts = bars[-1].ts if bars else None
+    global_loss_bar = None
+    if latest_bar_ts is not None:
+        for strategy_state in strategies.values():
+            if strategy_state.get("last_loss_bar") == latest_bar_ts:
+                global_loss_bar = latest_bar_ts
+                break
+
+    for name, strategy_state in strategies.items():
         if strategy_state.get("open_trade"):
             continue
         if name == "zukkumi_original":
@@ -1630,6 +1734,19 @@ def run_tick(state: dict[str, Any], symbol: str, interval: str, range_name: str,
                     status="OBSERVATION_CANDIDATE" if observation.observation_type else "NO_TRADE_CANDIDATE",
                     filter_reason=candidate_filter_reason(observation, trade_min_level=trade_min_level, trade_min_rr=min_rr),
                 )
+            continue
+        block_reason = entry_block_reason(name, strategy_state, signal, latest_bar_ts, global_loss_bar)
+        if block_reason:
+            append_event({
+                "strategy": name,
+                "event": "ENTRY_BLOCKED",
+                "symbol": symbol,
+                "bar_time": latest_bar_ts,
+                "bar_time_text": text_time(latest_bar_ts) if latest_bar_ts else None,
+                "reason": block_reason,
+                "signal_side": signal.side,
+                "setup_type": signal.setup_type,
+            })
             continue
         key = signal_key(name, symbol, signal)
         if key in strategy_state.get("seen_signal_keys", []):

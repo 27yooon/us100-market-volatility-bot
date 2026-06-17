@@ -40,6 +40,9 @@ SCORE_WATCH_TRADE_SESSIONS = {"EUROPE_TO_US_PRE", "US_PREMARKET", "US_REGULAR"}
 LOSS_COOLDOWN_SECONDS = 15 * 60
 ROUNDING_PROTECT_MIN_POINTS = 20.0
 ROUNDING_PROTECT_RISK_MULTIPLE = 0.8
+ROUNDING_FAILURE_CHECK_BARS = 2
+ROUNDING_FAILURE_MIN_RESPONSE_POINTS = 10.0
+ROUNDING_FAILURE_RISK_MULTIPLE = 0.35
 
 LEGACY_STRATEGY_NAMES = {
     "zukkumi_rules": "zukkumi_original",
@@ -1143,6 +1146,39 @@ def rounding_profit_exit_reason(trade: dict[str, Any], history: list[bot.Bar]) -
     return None
 
 
+def rounding_failure_exit_reason(trade: dict[str, Any], history: list[bot.Bar]) -> str | None:
+    if not is_rounding_trade(trade):
+        return None
+
+    after_open = [bar for bar in history if bar.ts > trade["opened_at"]]
+    if len(after_open) < ROUNDING_FAILURE_CHECK_BARS:
+        return None
+
+    current = after_open[-1]
+    entry = float(trade["entry"])
+    risk = trade_risk_points(trade)
+    minimum_response = max(ROUNDING_FAILURE_MIN_RESPONSE_POINTS, risk * ROUNDING_FAILURE_RISK_MULTIPLE)
+
+    if trade["side"] == "LONG":
+        favorable = max(bar.high for bar in after_open) - entry
+        adverse_close = current.close < entry
+        consecutive_adverse = len(after_open) >= 2 and after_open[-1].close < after_open[-2].close < entry
+        post_entry_break = len(after_open) >= 3 and current.close < min(bar.low for bar in after_open[:-1])
+    else:
+        favorable = entry - min(bar.low for bar in after_open)
+        adverse_close = current.close > entry
+        consecutive_adverse = len(after_open) >= 2 and after_open[-1].close > after_open[-2].close > entry
+        post_entry_break = len(after_open) >= 3 and current.close > max(bar.high for bar in after_open[:-1])
+
+    no_follow_through = favorable < minimum_response
+    if adverse_close and no_follow_through and (consecutive_adverse or post_entry_break):
+        return (
+            "rounding failure stop: "
+            f"no follow-through after {len(after_open)} bars, best move {favorable:.1f}pt"
+        )
+    return None
+
+
 def update_open_trade(strategy: str, state: dict[str, Any], bars: list[bot.Bar]) -> None:
     trade = state.get("open_trade")
     if not trade:
@@ -1161,6 +1197,10 @@ def update_open_trade(strategy: str, state: dict[str, Any], bars: list[bot.Bar])
             if bar.close < trade["stop"]:
                 close_trade(strategy, state, trade, "LOSS", bar.close, bar.ts, "5m close below stop")
                 return
+            failure_exit = rounding_failure_exit_reason(trade, history)
+            if failure_exit:
+                close_trade(strategy, state, trade, "LOSS", bar.close, bar.ts, failure_exit)
+                return
         else:
             if bar.low <= trade["target"]:
                 close_trade(strategy, state, trade, "WIN", trade["target"], bar.ts, "+50pt target hit")
@@ -1171,6 +1211,10 @@ def update_open_trade(strategy: str, state: dict[str, Any], bars: list[bot.Bar])
                 return
             if bar.close > trade["stop"]:
                 close_trade(strategy, state, trade, "LOSS", bar.close, bar.ts, "5m close above stop")
+                return
+            failure_exit = rounding_failure_exit_reason(trade, history)
+            if failure_exit:
+                close_trade(strategy, state, trade, "LOSS", bar.close, bar.ts, failure_exit)
                 return
 
 

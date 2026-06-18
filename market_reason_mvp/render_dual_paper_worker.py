@@ -178,6 +178,7 @@ def format_trade_telegram(record: dict[str, Any]) -> str:
     strategy = strategy_display_name(record.get("strategy"))
     event = record.get("event")
     if event == "OPEN":
+        management_plan = record.get("management_plan") or "-"
         return "\n".join(
             [
                 "[쭈꾸미 모의매매 진입]",
@@ -185,7 +186,8 @@ def format_trade_telegram(record: dict[str, Any]) -> str:
                 f"방향: {record.get('side')}",
                 f"셋업: {record.get('setup_type')}",
                 f"진입가: {float(record.get('entry', 0.0)):.2f}",
-                f"목표가: {float(record.get('target', 0.0)):.2f}",
+                f"최종 목표가: {float(record.get('target', 0.0)):.2f}",
+                f"청산 관리: {management_plan}",
                 f"무효/손절: {float(record.get('stop', 0.0)):.2f}",
                 f"RR: {float(record.get('rr') or 0.0):.2f}",
                 f"근거: {short_reasons(record)}",
@@ -1149,10 +1151,12 @@ def rounding_profit_exit_reason(trade: dict[str, Any], history: list[bot.Bar]) -
 
     if trade["side"] == "LONG":
         stalled = current.close <= history[-2].close or current.high <= max(bar.high for bar in history[-4:-1])
+        opposite_close = current.close < current.open
     else:
         stalled = current.close >= history[-2].close or current.low >= min(bar.low for bar in history[-4:-1])
+        opposite_close = current.close > current.open
 
-    if stalled and (range_shrinking or body_shrinking or consecutive_body_shrink):
+    if stalled and (range_shrinking or body_shrinking or consecutive_body_shrink or opposite_close):
         return f"rounding profit protection: +{profit:.1f}pt and candles shrinking"
     return None
 
@@ -1217,6 +1221,39 @@ def momentum_profit_exit_reason(trade: dict[str, Any], history: list[bot.Bar]) -
     if no_new_extreme and (opposite_close or body_reversal):
         return f"momentum profit protection: +{profit:.1f}pt and follow-through stalled"
     return None
+
+
+def protective_trigger_points(trade: dict[str, Any]) -> float | None:
+    risk = trade_risk_points(trade)
+    if is_rounding_trade(trade):
+        return max(ROUNDING_PROTECT_MIN_POINTS, risk * ROUNDING_PROTECT_RISK_MULTIPLE)
+    if str(trade.get("strategy_version") or "").startswith("zukkumi_original"):
+        return None
+    return max(MOMENTUM_PROTECT_MIN_POINTS, risk * MOMENTUM_PROTECT_RISK_MULTIPLE)
+
+
+def protective_price(trade: dict[str, Any]) -> float | None:
+    trigger = protective_trigger_points(trade)
+    if trigger is None:
+        return None
+    entry = float(trade["entry"])
+    return entry + trigger if trade["side"] == "LONG" else entry - trigger
+
+
+def trade_management_plan(strategy: str, trade: dict[str, Any]) -> str:
+    protect = protective_price(trade)
+    if protect is not None:
+        trigger = protective_trigger_points(trade) or 0.0
+        if is_rounding_trade(trade):
+            return (
+                f"{protect:.2f} 부근(+{trigger:.1f}pt/0.8R)부터 라운딩 수익보호. "
+                "봉 축소, 고저점 갱신 실패, 반대봉이면 조기청산. 최종 +50pt는 강하게 밀 때만."
+            )
+        return (
+            f"{protect:.2f} 부근(+{trigger:.1f}pt/0.9R)부터 모멘텀 수익보호. "
+            "추가 진행 실패와 반대봉이면 조기청산."
+        )
+    return "기본 +50pt 목표와 5분봉 종가 손절 기준."
 
 
 def update_open_trade(strategy: str, state: dict[str, Any], bars: list[bot.Bar]) -> None:
@@ -1458,6 +1495,9 @@ def open_trade(strategy: str, state: dict[str, Any], symbol: str, signal: PaperS
         "opened_at_text": text_time(signal.bar_time),
         "signal_key": signal_key(strategy, symbol, signal),
     }
+    trade["protect_price"] = protective_price(trade)
+    trade["management_plan"] = trade_management_plan(strategy, trade)
+    trade["review_summary"] = trade["management_plan"]
     state["open_trade"] = trade
     state["seen_signal_keys"] = [*state.get("seen_signal_keys", []), trade["signal_key"]][-300:]
     append_event({"strategy": strategy, "event": "OPEN", **trade})

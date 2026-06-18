@@ -227,7 +227,7 @@ def build_properties(record: dict[str, Any]) -> dict[str, Any]:
         "상태": _select(status),
         "진입가": _number(record.get("entry") or record.get("level")),
         "손절가": _number(record.get("stop")),
-        "1차 익절가": _number(record.get("target")),
+        "1차 익절가": _number(record.get("protect_price") or record.get("target")),
         "청산가": _number(record.get("exit_price")),
         "결과": _select(record.get("result") or record.get("candidate_result") or "NONE"),
         "손익(pt)": _number(pnl),

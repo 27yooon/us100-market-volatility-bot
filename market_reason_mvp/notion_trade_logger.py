@@ -166,13 +166,58 @@ def _date_parts(date_text: str) -> tuple[str, str]:
     return date_text[:4], date_text[5:7]
 
 
+def _display_result(record: dict[str, Any]) -> str | None:
+    event = record.get("event")
+    if event == "OPEN":
+        return "OPEN"
+    if event == "CLOSE":
+        return record.get("result") or "CLOSED"
+    if event in {"CANDIDATE_OPEN", "CANDIDATE_CLOSE", "ENTRY_BLOCKED"}:
+        return "NO_TRADE"
+    if event == "DAILY_REPORT":
+        return "DAILY_REPORT"
+    if event == "ERROR":
+        return "ERROR"
+    return record.get("result") or record.get("candidate_result")
+
+
+def _display_status(record: dict[str, Any]) -> str:
+    event = record.get("event")
+    result = _display_result(record)
+    if event == "CLOSE" and result in {"WIN", "LOSS"}:
+        return f"CLOSED_{result}"
+    return str(record.get("candidate_status") or result or event or "기록")
+
+
+def _trade_close_summary(record: dict[str, Any]) -> str:
+    event = record.get("event")
+    if event == "OPEN":
+        return "거래 상태: OPEN - 모의 포지션 진입 완료, 아직 청산 전"
+    if event != "CLOSE":
+        return ""
+    result = record.get("result") or "CLOSED"
+    pnl = record.get("pnl_points")
+    pnl_text = ""
+    if pnl is not None:
+        try:
+            pnl_text = f" / 손익 {float(pnl):+.2f}pt"
+        except (TypeError, ValueError):
+            pnl_text = f" / 손익 {pnl}"
+    return (
+        f"거래 종료: {result} / "
+        f"청산사유 {record.get('close_reason') or '-'} / "
+        f"진입 {record.get('entry')} -> 청산 {record.get('exit_price')}"
+        f"{pnl_text}"
+    )
+
+
 def _event_title(record: dict[str, Any]) -> str:
     event = record.get("event", "-")
     strategy = record.get("strategy", "render")
     if event == "DAILY_REPORT":
         return f"{record.get('report_date', '')} {record.get('report_title', '일일 보고')}".strip()
     side = record.get("side", "-")
-    result = record.get("result") or record.get("candidate_result") or ""
+    result = _display_result(record) or ""
     ts = record.get("opened_at_text") or record.get("closed_at_text") or record.get("logged_at") or ""
     setup = record.get("setup_type") or record.get("mode") or "상태 확인"
     parts = [str(ts), str(event), _strategy_label(strategy)]
@@ -202,10 +247,12 @@ def build_properties(record: dict[str, Any]) -> dict[str, Any]:
     if event == "DAILY_REPORT":
         pnl = totals.get("pnl_points")
     year_text, month_text = _date_parts(date_text)
-    status = record.get("candidate_status") or record.get("result") or event or "기록"
+    status = _display_status(record)
+    display_result = _display_result(record)
     review_lines = [
         _strategy_header(record),
         _daily_report_summary(record),
+        _trade_close_summary(record),
         record.get("review_summary"),
         _join_list(record.get("reasons")),
         _join_list(record.get("cautions")),
@@ -229,7 +276,7 @@ def build_properties(record: dict[str, Any]) -> dict[str, Any]:
         "손절가": _number(record.get("stop")),
         "1차 익절가": _number(record.get("protect_price") or record.get("target")),
         "청산가": _number(record.get("exit_price")),
-        "결과": _select(record.get("result") or record.get("candidate_result") or "NONE"),
+        "결과": _select(display_result),
         "손익(pt)": _number(pnl),
         "계약수": _number(record.get("contracts")),
         "R배수": _number(record.get("r_multiple")),

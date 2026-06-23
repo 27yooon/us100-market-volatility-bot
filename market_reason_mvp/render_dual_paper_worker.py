@@ -42,6 +42,10 @@ DAILY_STRATEGY_MAX_LOSSES = 2
 DAILY_STRATEGY_STOP_LOSS_POINTS = -70.0
 DAILY_GLOBAL_MAX_LOSSES = 4
 DAILY_GLOBAL_STOP_LOSS_POINTS = -120.0
+DAILY_SIDE_MAX_LOSSES = 2
+DAILY_SIDE_STOP_LOSS_POINTS = -80.0
+REGIME_LOOKBACK_BARS = 12
+REGIME_MIN_MOVE_POINTS = 20.0
 MOMENTUM_PROTECT_MIN_POINTS = 30.0
 MOMENTUM_PROTECT_RISK_MULTIPLE = 0.9
 ROUNDING_PROTECT_MIN_POINTS = 20.0
@@ -1355,21 +1359,98 @@ def global_daily_risk_block_reason(strategies: dict[str, dict[str, Any]], latest
     return None
 
 
+def daily_side_block_reason(
+    strategies: dict[str, dict[str, Any]],
+    side: str | None,
+    latest_bar_ts: int | None,
+) -> str | None:
+    if latest_bar_ts is None or side not in {"LONG", "SHORT"}:
+        return None
+    date_text = text_time(latest_bar_ts)[:10]
+    closed = [
+        trade
+        for strategy_state in strategies.values()
+        for trade in closed_trades_for_date(strategy_state, date_text)
+        if trade.get("side") == side
+    ]
+    losses = sum(1 for trade in closed if trade.get("result") == "LOSS")
+    pnl = sum(float(trade.get("pnl_points", 0.0) or 0.0) for trade in closed)
+    if losses >= DAILY_SIDE_MAX_LOSSES:
+        return f"daily {side} failure memory: {losses} losses on {date_text}"
+    if pnl <= DAILY_SIDE_STOP_LOSS_POINTS:
+        return f"daily {side} pnl memory: {pnl:+.1f}pt on {date_text}"
+    return None
+
+
+def market_regime_snapshot(bars: list[bot.Bar]) -> dict[str, Any]:
+    if len(bars) < REGIME_LOOKBACK_BARS:
+        return {"regime": "UNKNOWN", "reason": "not enough bars"}
+    recent = bars[-REGIME_LOOKBACK_BARS:]
+    half = REGIME_LOOKBACK_BARS // 2
+    first = recent[:half]
+    last = recent[half:]
+    volatility = atr(bars, 14) or 0.0
+    threshold = max(REGIME_MIN_MOVE_POINTS, volatility * 0.35)
+    first_high = max(bar.high for bar in first)
+    first_low = min(bar.low for bar in first)
+    last_high = max(bar.high for bar in last)
+    last_low = min(bar.low for bar in last)
+    close_move = recent[-1].close - recent[0].close
+    lower_highs = last_high < first_high - threshold
+    lower_lows = last_low < first_low - threshold
+    higher_highs = last_high > first_high + threshold
+    higher_lows = last_low > first_low + threshold
+    if lower_highs and lower_lows and close_move < -threshold:
+        regime = "TREND_DOWN"
+    elif higher_highs and higher_lows and close_move > threshold:
+        regime = "TREND_UP"
+    else:
+        regime = "RANGE_OR_CHOP"
+    return {
+        "regime": regime,
+        "threshold": round(threshold, 2),
+        "close_move": round(close_move, 2),
+        "first_high": round(first_high, 2),
+        "last_high": round(last_high, 2),
+        "first_low": round(first_low, 2),
+        "last_low": round(last_low, 2),
+    }
+
+
+def market_regime_block_reason(signal: PaperSignal | None, market_regime: dict[str, Any] | None) -> str | None:
+    if signal is None or market_regime is None:
+        return None
+    regime = market_regime.get("regime")
+    if signal.side == "LONG" and regime == "TREND_DOWN":
+        return "market regime block: TREND_DOWN rejects LONG"
+    if signal.side == "SHORT" and regime == "TREND_UP":
+        return "market regime block: TREND_UP rejects SHORT"
+    return None
+
+
 def entry_block_reason(
     strategy: str,
     strategy_state: dict[str, Any],
+    strategies: dict[str, dict[str, Any]],
     signal: PaperSignal | None,
     latest_bar_ts: int | None,
     global_loss_bar: int | None,
     global_risk_block: str | None,
+    market_regime: dict[str, Any] | None,
 ) -> str | None:
     if latest_bar_ts is None:
         return None
     if global_risk_block:
         return global_risk_block
+    side_block = daily_side_block_reason(strategies, signal.side if signal is not None else None, latest_bar_ts)
+    if side_block:
+        return side_block
     daily_block = daily_risk_block_reason(strategy, strategy_state, latest_bar_ts)
     if daily_block:
         return daily_block
+    regime_block = market_regime_block_reason(signal, market_regime)
+    if regime_block:
+        return regime_block
     if global_loss_bar == latest_bar_ts:
         return "same 5m bar after stop loss"
     cooldown_until = strategy_state.get("cooldown_until")
@@ -1876,6 +1957,7 @@ def run_tick(state: dict[str, Any], symbol: str, interval: str, range_name: str,
                 global_loss_bar = latest_bar_ts
                 break
     global_risk_block = global_daily_risk_block_reason(strategies, latest_bar_ts)
+    market_regime = market_regime_snapshot(bars)
 
     for name, strategy_state in strategies.items():
         if strategy_state.get("open_trade"):
@@ -1913,7 +1995,16 @@ def run_tick(state: dict[str, Any], symbol: str, interval: str, range_name: str,
                     filter_reason=candidate_filter_reason(observation, trade_min_level=trade_min_level, trade_min_rr=min_rr),
                 )
             continue
-        block_reason = entry_block_reason(name, strategy_state, signal, latest_bar_ts, global_loss_bar, global_risk_block)
+        block_reason = entry_block_reason(
+            name,
+            strategy_state,
+            strategies,
+            signal,
+            latest_bar_ts,
+            global_loss_bar,
+            global_risk_block,
+            market_regime,
+        )
         if block_reason:
             append_event({
                 "strategy": name,
@@ -1924,6 +2015,7 @@ def run_tick(state: dict[str, Any], symbol: str, interval: str, range_name: str,
                 "reason": block_reason,
                 "signal_side": signal.side,
                 "setup_type": signal.setup_type,
+                "market_regime": market_regime,
             })
             continue
         key = signal_key(name, symbol, signal)
@@ -1939,6 +2031,7 @@ def run_tick(state: dict[str, Any], symbol: str, interval: str, range_name: str,
             "symbol": symbol,
             "price": price,
             "strategy_versions": STRATEGY_VERSIONS,
+            "market_regime": market_regime,
             "today_status": today_status(strategies),
             "summaries": {name: summary(strategy_state) for name, strategy_state in strategies.items()},
         }

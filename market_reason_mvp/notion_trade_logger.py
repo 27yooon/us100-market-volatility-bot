@@ -168,17 +168,11 @@ def _date_parts(date_text: str) -> tuple[str, str]:
 
 def _display_result(record: dict[str, Any]) -> str | None:
     event = record.get("event")
-    if event == "OPEN":
-        return "OPEN"
     if event == "CLOSE":
-        return record.get("result") or "CLOSED"
-    if event in {"CANDIDATE_OPEN", "CANDIDATE_CLOSE", "ENTRY_BLOCKED"}:
-        return "NO_TRADE"
-    if event == "DAILY_REPORT":
-        return "DAILY_REPORT"
-    if event == "ERROR":
-        return "ERROR"
-    return record.get("result") or record.get("candidate_result")
+        result = record.get("result")
+        if result in {"WIN", "LOSS"}:
+            return result
+    return None
 
 
 def _display_status(record: dict[str, Any]) -> str:
@@ -186,7 +180,7 @@ def _display_status(record: dict[str, Any]) -> str:
     result = _display_result(record)
     if event == "CLOSE" and result in {"WIN", "LOSS"}:
         return f"CLOSED_{result}"
-    return str(record.get("candidate_status") or result or event or "기록")
+    return str(record.get("candidate_status") or record.get("result") or record.get("candidate_result") or event or "기록")
 
 
 def _trade_close_summary(record: dict[str, Any]) -> str:

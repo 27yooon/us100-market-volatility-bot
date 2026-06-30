@@ -125,9 +125,14 @@ def _strategy_header(record: dict[str, Any]) -> str:
         )
     label = _strategy_label(strategy)
     note = _strategy_note(strategy)
+    setup_group = record.get("setup_group")
+    record_type = record.get("record_type")
+    suffix = ""
+    if setup_group or record_type:
+        suffix = f" / 세부 {setup_group or '-'} / 기록 {record_type or '-'}"
     if note:
-        return f"전략 구분: {label} ({strategy}) - {note}"
-    return f"전략 구분: {label} ({strategy or '-'})"
+        return f"전략 구분: {label} ({strategy}) - {note}{suffix}"
+    return f"전략 구분: {label} ({strategy or '-'}){suffix}"
 
 
 def _daily_report_summary(record: dict[str, Any]) -> str:
@@ -213,7 +218,7 @@ def _event_title(record: dict[str, Any]) -> str:
     side = record.get("side", "-")
     result = _display_result(record) or ""
     ts = record.get("opened_at_text") or record.get("closed_at_text") or record.get("logged_at") or ""
-    setup = record.get("setup_type") or record.get("mode") or "상태 확인"
+    setup = record.get("setup_group") or record.get("setup_type") or record.get("mode") or "상태 확인"
     parts = [str(ts), str(event), _strategy_label(strategy)]
     if side != "-":
         parts.append(str(side))
@@ -243,10 +248,12 @@ def build_properties(record: dict[str, Any]) -> dict[str, Any]:
     year_text, month_text = _date_parts(date_text)
     status = _display_status(record)
     display_result = _display_result(record)
+    setup_group = record.get("setup_group") or event or record.get("mode") or "상태 확인"
     review_lines = [
         _strategy_header(record),
         _daily_report_summary(record),
         _trade_close_summary(record),
+        f"구분: {record.get('record_type')}" if record.get("record_type") else None,
         record.get("review_summary"),
         _join_list(record.get("reasons")),
         _join_list(record.get("cautions")),
@@ -262,7 +269,7 @@ def build_properties(record: dict[str, Any]) -> dict[str, Any]:
         "연도": {"rich_text": _plain_text(year_text)},
         "월": {"rich_text": _plain_text(month_text)},
         "전략": _select(strategy_label),
-        "매매법 구분": _select(event or record.get("mode") or "상태 확인"),
+        "매매법 구분": _select(setup_group),
         "종목": {"rich_text": _plain_text(record.get("symbol"))},
         "포지션": _select(record.get("side") or "-"),
         "상태": _select(status),

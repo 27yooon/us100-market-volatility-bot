@@ -173,6 +173,60 @@ def strategy_display_name(name: str | None) -> str:
     }.get(str(name), str(name or "-"))
 
 
+def record_type_for_event(event: str | None) -> str:
+    if event in {"OPEN", "CLOSE"}:
+        return "ACTUAL_TRADE"
+    if event in {"CANDIDATE_OPEN", "CANDIDATE_CLOSE"}:
+        return "OBSERVATION_CANDIDATE"
+    if event == "ENTRY_BLOCKED":
+        return "BLOCKED_SIGNAL"
+    if event == "DAILY_REPORT":
+        return "DAILY_REPORT"
+    if event == "HEARTBEAT":
+        return "HEARTBEAT"
+    if event == "ERROR":
+        return "ERROR"
+    return "SYSTEM_EVENT"
+
+
+def setup_group_for_record(record: dict[str, Any]) -> str:
+    strategy = str(record.get("strategy") or "")
+    setup = str(record.get("setup_type") or "")
+    observation = str(record.get("observation_type") or "")
+    if strategy == "zukkumi_original":
+        if "라운딩" in setup:
+            return "쭈꾸미_라운딩"
+        if "P라인" in setup:
+            return "쭈꾸미_P라인"
+        return "쭈꾸미_기타"
+    if strategy == "orb_paper":
+        if observation == "BURKE_TWO_DAY_EXPERIMENT" or "2일" in setup or "전일" in setup:
+            return "버크_2일반전"
+        if observation == "BURKE_PUMP_DUMP_EXPERIMENT" or "pump" in setup or "dump" in setup:
+            return "버크_PumpDump"
+        return "버크_ORB"
+    if strategy == "score_watch":
+        tier = record.get("quality_tier")
+        score = record.get("score_total")
+        if tier:
+            return f"점수제_{tier}급"
+        if isinstance(score, int) and score >= SCORE_WATCH_TRADE_MIN_SCORE:
+            return "점수제_A급"
+        return "점수제_관찰"
+    if strategy == "indicator_basic":
+        return "기본지표"
+    return "-"
+
+
+def enrich_record(record: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(record)
+    enriched.setdefault("record_type", record_type_for_event(enriched.get("event")))
+    if enriched.get("strategy"):
+        enriched.setdefault("strategy_label", strategy_display_name(enriched.get("strategy")))
+        enriched.setdefault("setup_group", setup_group_for_record(enriched))
+    return enriched
+
+
 def short_reasons(record: dict[str, Any], limit: int = 3) -> str:
     reasons = record.get("reasons") or []
     if not isinstance(reasons, list):
@@ -189,6 +243,7 @@ def format_trade_telegram(record: dict[str, Any]) -> str:
             [
                 "[쭈꾸미 모의매매 진입]",
                 f"전략: {strategy}",
+                f"세부: {record.get('setup_group') or '-'}",
                 f"방향: {record.get('side')}",
                 f"셋업: {record.get('setup_type')}",
                 f"진입가: {float(record.get('entry', 0.0)):.2f}",
@@ -205,6 +260,7 @@ def format_trade_telegram(record: dict[str, Any]) -> str:
         [
             "[쭈꾸미 모의매매 청산]",
             f"전략: {strategy}",
+            f"세부: {record.get('setup_group') or '-'}",
             f"방향: {record.get('side')}",
             f"결과: {record.get('result')}",
             f"진입가: {float(record.get('entry', 0.0)):.2f}",
@@ -219,7 +275,7 @@ def format_trade_telegram(record: dict[str, Any]) -> str:
 
 def append_event(record: dict[str, Any]) -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    record = {"logged_at": now_text(), **record}
+    record = enrich_record({"logged_at": now_text(), **record})
     with JSONL_PATH.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
     print(json.dumps(record, ensure_ascii=False), flush=True)
@@ -1708,9 +1764,10 @@ def open_candidate(
         "signal_key": key,
         "review_summary": review_summary,
     }
+    candidate = enrich_record({"strategy": strategy, "event": "CANDIDATE_OPEN", **candidate})
     state["watch_candidates"] = [*state.get("watch_candidates", []), candidate][-200:]
     state["seen_candidate_keys"] = [*state.get("seen_candidate_keys", []), key][-500:]
-    append_event({"strategy": strategy, "event": "CANDIDATE_OPEN", **candidate})
+    append_event(candidate)
 
 
 def update_watch_candidates(strategy: str, state: dict[str, Any], bars: list[bot.Bar]) -> None:
@@ -1765,6 +1822,8 @@ def update_watch_candidates(strategy: str, state: dict[str, Any], bars: list[bot
             pnl = exit_price - candidate["entry"] if candidate["side"] == "LONG" else candidate["entry"] - exit_price
             resolved = {
                 **candidate,
+                "strategy": strategy,
+                "event": "CANDIDATE_CLOSE",
                 "candidate_result": result,
                 "exit_price": exit_price,
                 "pnl_points": pnl,
@@ -1777,7 +1836,8 @@ def update_watch_candidates(strategy: str, state: dict[str, Any], bars: list[bot
                     "동일 5분봉 안에서 목표/무효가 함께 보여 수동 복기 필요"
                 ),
             }
-            append_event({"strategy": strategy, "event": "CANDIDATE_CLOSE", **resolved})
+            resolved = enrich_record(resolved)
+            append_event(resolved)
             break
 
         updated.append(resolved or candidate)
@@ -1797,9 +1857,10 @@ def open_trade(strategy: str, state: dict[str, Any], symbol: str, signal: PaperS
     trade["protect_price"] = protective_price(trade)
     trade["management_plan"] = trade_management_plan(strategy, trade)
     trade["review_summary"] = trade["management_plan"]
+    trade = enrich_record({"strategy": strategy, "event": "OPEN", **trade})
     state["open_trade"] = trade
     state["seen_signal_keys"] = [*state.get("seen_signal_keys", []), trade["signal_key"]][-300:]
-    append_event({"strategy": strategy, "event": "OPEN", **trade})
+    append_event(trade)
 
 
 def close_trade(
@@ -1814,6 +1875,8 @@ def close_trade(
     pnl = exit_price - trade["entry"] if trade["side"] == "LONG" else trade["entry"] - exit_price
     closed = {
         **trade,
+        "strategy": strategy,
+        "event": "CLOSE",
         "result": result,
         "exit_price": exit_price,
         "pnl_points": pnl,
@@ -1821,6 +1884,7 @@ def close_trade(
         "closed_at_text": text_time(closed_at),
         "close_reason": reason,
     }
+    closed = enrich_record(closed)
     state["closed_trades"] = [*state.get("closed_trades", []), closed]
     state["open_trade"] = None
     state["last_closed_bar"] = closed_at
@@ -1828,7 +1892,7 @@ def close_trade(
         state["cooldown_until"] = closed_at + LOSS_COOLDOWN_SECONDS
         state["last_loss_bar"] = closed_at
         state["last_loss_side"] = trade.get("side")
-    append_event({"strategy": strategy, "event": "CLOSE", **closed})
+    append_event(closed)
 
 
 def summary(strategy_state: dict[str, Any]) -> dict[str, Any]:

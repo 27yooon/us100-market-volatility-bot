@@ -53,6 +53,8 @@ ROUNDING_PROTECT_RISK_MULTIPLE = 0.8
 ROUNDING_FAILURE_CHECK_BARS = 2
 ROUNDING_FAILURE_MIN_RESPONSE_POINTS = 10.0
 ROUNDING_FAILURE_RISK_MULTIPLE = 0.35
+BURKE_EXPERIMENTAL_ACTUAL = False
+BURKE_EXPERIMENTAL_MIN_OBSERVE_RR = 0.50
 
 LEGACY_STRATEGY_NAMES = {
     "zukkumi_rules": "zukkumi_original",
@@ -1077,14 +1079,230 @@ def ny_orb_observation_candidates(bars: list[bot.Bar]) -> list[PaperSignal]:
     return out[:3]
 
 
+def session_day_ohlc(bars: list[bot.Bar]) -> list[dict[str, Any]]:
+    days: dict[str, list[bot.Bar]] = {}
+    for bar in bars:
+        days.setdefault(text_time(bar.ts)[:10], []).append(bar)
+    out: list[dict[str, Any]] = []
+    for date_text in sorted(days):
+        day_bars = days[date_text]
+        if len(day_bars) < 12:
+            continue
+        out.append({
+            "date": date_text,
+            "open": day_bars[0].open,
+            "high": max(bar.high for bar in day_bars),
+            "low": min(bar.low for bar in day_bars),
+            "close": day_bars[-1].close,
+            "bars": day_bars,
+        })
+    return out
+
+
+def burke_two_day_reversal_candidates(bars: list[bot.Bar]) -> list[PaperSignal]:
+    if len(bars) < 120:
+        return []
+    days = session_day_ohlc(bars)
+    today_text = text_time(bars[-1].ts)[:10]
+    today_index = next((i for i, day in enumerate(days) if day["date"] == today_text), None)
+    if today_index is None or today_index < 2:
+        return []
+    prev2 = days[today_index - 2]
+    prev1 = days[today_index - 1]
+    today_bars = days[today_index]["bars"]
+    if len(today_bars) < 8:
+        return []
+
+    current_atr = atr(bars, 14)
+    if current_atr is None or current_atr <= 0:
+        return []
+    last = bars[-1]
+    if session_label(last.ts) != "US_REGULAR":
+        return []
+    buffer = max(3.0, current_atr * 0.15)
+    coil = today_bars[-6:-1] if len(today_bars) >= 7 else today_bars[:-1]
+    if len(coil) < 2:
+        return []
+    coil_high = max(bar.high for bar in coil)
+    coil_low = min(bar.low for bar in coil)
+    trigger_high = max(bar.high for bar in today_bars[-4:-1])
+    trigger_low = min(bar.low for bar in today_bars[-4:-1])
+    today_high = max(bar.high for bar in today_bars)
+    today_low = min(bar.low for bar in today_bars)
+    out: list[PaperSignal] = []
+
+    two_red = prev2["close"] < prev2["open"] and prev1["close"] < prev1["open"]
+    one_red = prev1["close"] < prev1["open"]
+    swept_prev_low = today_low < prev1["low"] - buffer
+    reclaimed_prev_low = last.close > prev1["low"] + buffer
+    broke_coil_high = last.close > min(coil_high, trigger_high) + buffer
+    if one_red and swept_prev_low and reclaimed_prev_low and broke_coil_high:
+        two_day_score = 75 if two_red else 65
+        signal = build_observation_signal(
+            "LONG",
+            "버크 2일 하락 후 저점 회복 롱 관찰" if two_red else "버크 전일 하락 후 저점 회복 롱 관찰",
+            2 if two_red else 1,
+            last.close,
+            coil_low - buffer,
+            last.ts,
+            [
+                "Stacey Burke 실험: two-day/first-green reversal 가설",
+                f"전전일/전일 방향: {prev2['date']} {'음봉' if prev2['close'] < prev2['open'] else '양봉'}, {prev1['date']} 음봉",
+                "전일 저점 하회 후 회복",
+                "최근 정체구간 고점 돌파 확인",
+            ],
+            ["experimental / low_confidence: 공개 자료 기반 가설, 실제 버크 공식 룰 아님"],
+            "BURKE_TWO_DAY_EXPERIMENT",
+            score_total=two_day_score,
+            score_breakdown={
+                "two_day_context": 25 if two_red else 15,
+                "liquidity_sweep": 25,
+                "reclaim": 15,
+                "coil_break": 10,
+                "total": two_day_score,
+            },
+        )
+        if signal and (signal.rr or 0.0) >= BURKE_EXPERIMENTAL_MIN_OBSERVE_RR:
+            out.append(signal)
+
+    two_green = prev2["close"] > prev2["open"] and prev1["close"] > prev1["open"]
+    one_green = prev1["close"] > prev1["open"]
+    swept_prev_high = today_high > prev1["high"] + buffer
+    rejected_prev_high = last.close < prev1["high"] - buffer
+    broke_coil_low = last.close < max(coil_low, trigger_low) - buffer
+    if one_green and swept_prev_high and rejected_prev_high and broke_coil_low:
+        two_day_score = 75 if two_green else 65
+        signal = build_observation_signal(
+            "SHORT",
+            "버크 2일 상승 후 고점 실패 숏 관찰" if two_green else "버크 전일 상승 후 고점 실패 숏 관찰",
+            2 if two_green else 1,
+            last.close,
+            coil_high + buffer,
+            last.ts,
+            [
+                "Stacey Burke 실험: two-day/first-red reversal 가설",
+                f"전전일/전일 방향: {prev2['date']} {'양봉' if prev2['close'] > prev2['open'] else '음봉'}, {prev1['date']} 양봉",
+                "전일 고점 상회 후 박스 안 재진입",
+                "최근 정체구간 저점 이탈 확인",
+            ],
+            ["experimental / low_confidence: 공개 자료 기반 가설, 실제 버크 공식 룰 아님"],
+            "BURKE_TWO_DAY_EXPERIMENT",
+            score_total=two_day_score,
+            score_breakdown={
+                "two_day_context": 25 if two_green else 15,
+                "liquidity_sweep": 25,
+                "rejection": 15,
+                "coil_break": 10,
+                "total": two_day_score,
+            },
+        )
+        if signal and (signal.rr or 0.0) >= BURKE_EXPERIMENTAL_MIN_OBSERVE_RR:
+            out.append(signal)
+
+    return out
+
+
+def burke_pump_dump_coil_candidates(bars: list[bot.Bar]) -> list[PaperSignal]:
+    if len(bars) < 40:
+        return []
+    current_atr = atr(bars, 14)
+    if current_atr is None or current_atr <= 0:
+        return []
+    recent = bars[-10:]
+    last = recent[-1]
+    if session_label(last.ts) != "US_REGULAR":
+        return []
+    pump = recent[:3]
+    coil = recent[3:-1]
+    if len(coil) < 3:
+        return []
+    buffer = max(3.0, current_atr * 0.15)
+    pump_move = pump[-1].close - pump[0].open
+    coil_high = max(bar.high for bar in coil)
+    coil_low = min(bar.low for bar in coil)
+    coil_width = coil_high - coil_low
+    out: list[PaperSignal] = []
+    tight_coil = coil_width <= max(current_atr * 1.50, 30.0)
+    strong_move = abs(pump_move) >= max(current_atr * 0.80, 20.0)
+
+    if strong_move and tight_coil and pump_move < 0 and last.close > coil_high + buffer:
+        signal = build_observation_signal(
+            "LONG",
+            "버크 dump-coil-pump 롱 관찰",
+            2,
+            last.close,
+            coil_low - buffer,
+            last.ts,
+            [
+                "Stacey Burke 실험: dump -> coil -> pump",
+                f"초기 하락 {pump_move:.1f}pt 이후 coil 폭 {coil_width:.1f}pt",
+                "coil 상단 돌파",
+            ],
+            ["experimental / low_confidence: coil 정의는 쭈꾸미식 임시 정량화"],
+            "BURKE_PUMP_DUMP_EXPERIMENT",
+            score_total=70,
+            score_breakdown={
+                "directional_move": 25,
+                "coil_compression": 25,
+                "coil_break": 20,
+                "total": 70,
+            },
+        )
+        if signal and (signal.rr or 0.0) >= BURKE_EXPERIMENTAL_MIN_OBSERVE_RR:
+            out.append(signal)
+
+    if strong_move and tight_coil and pump_move > 0 and last.close < coil_low - buffer:
+        signal = build_observation_signal(
+            "SHORT",
+            "버크 pump-coil-dump 숏 관찰",
+            2,
+            last.close,
+            coil_high + buffer,
+            last.ts,
+            [
+                "Stacey Burke 실험: pump -> coil -> dump",
+                f"초기 상승 {pump_move:.1f}pt 이후 coil 폭 {coil_width:.1f}pt",
+                "coil 하단 이탈",
+            ],
+            ["experimental / low_confidence: coil 정의는 쭈꾸미식 임시 정량화"],
+            "BURKE_PUMP_DUMP_EXPERIMENT",
+            score_total=70,
+            score_breakdown={
+                "directional_move": 25,
+                "coil_compression": 25,
+                "coil_break": 20,
+                "total": 70,
+            },
+        )
+        if signal and (signal.rr or 0.0) >= BURKE_EXPERIMENTAL_MIN_OBSERVE_RR:
+            out.append(signal)
+
+    return out
+
+
+def burke_experimental_candidates(bars: list[bot.Bar]) -> list[PaperSignal]:
+    return [
+        *burke_two_day_reversal_candidates(bars),
+        *burke_pump_dump_coil_candidates(bars),
+    ][:4]
+
+
 def orb_paper_signal(bars: list[bot.Bar], min_rr: float) -> tuple[PaperSignal | None, list[PaperSignal]]:
-    candidates = ny_orb_observation_candidates(bars)
+    candidates = [
+        *ny_orb_observation_candidates(bars),
+        *burke_experimental_candidates(bars),
+    ]
     if not candidates:
         return None, []
 
     qualified = [
         signal for signal in candidates
-        if (signal.score_total or 0) >= 70 and signal.level >= 2 and (signal.rr or 0) >= min_rr
+        if (
+            signal.observation_type == "ORB_OBSERVATION" or BURKE_EXPERIMENTAL_ACTUAL
+        )
+        and (signal.score_total or 0) >= 70
+        and signal.level >= 2
+        and (signal.rr or 0) >= min_rr
     ]
     if not qualified:
         return None, candidates
